@@ -28,23 +28,26 @@ public class UserServiceImpl implements UserService {
     
     @Override
     public String registerUser(RegisterRequest request) {
-    	
-    	String email = request.getEmail().trim().toLowerCase();
 
-    	if (userRepository.existsByEmail(email)) {
-    	    throw new EmailAlreadyExistsException("Email already exists");
-    	}
+        String email = request.getEmail().trim().toLowerCase();
 
-    	User user = new User();
+        if (userRepository.existsByEmail(email)) {
+            throw new EmailAlreadyExistsException("Email already exists");
+        }
 
-    	user.setName(request.getName().trim());
-    	user.setEmail(email);   // ✅ Yahan email variable use hoga
-    	user.setPassword(passwordEncoder.encode(request.getPassword()));
-    	user.setRole(Role.USER);
+        User user = new User();
 
-    	userRepository.save(user);
+        user.setName(request.getName().trim());
+        user.setEmail(email);
+        user.setPassword(passwordEncoder.encode(request.getPassword()));
 
-    	return "User Registered Successfully";
+        // ✅ FIX: role handling
+        Role role = (request.getRole() != null) ? request.getRole() : Role.USER;
+        user.setRole(role);
+
+        userRepository.save(user);
+
+        return "User Registered Successfully";
     }
 
     @Override
