@@ -32,16 +32,16 @@ public class JwtService {
 
     public String generateToken(User user) {
 
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("role", user.getRole().name());
+    	 Map<String, Object> claims = new HashMap<>();
+    	    claims.put("role", user.getRole().name());
 
-        return Jwts.builder()
-                .claims(claims)
-                .subject(user.getEmail())
-                .issuedAt(new Date())
-                .expiration(new Date(System.currentTimeMillis() + expiration))
-                .signWith(getSignKey())
-                .compact();
+    	    return Jwts.builder()
+    	            .claims(claims)
+    	            .subject(user.getEmail())
+    	            .issuedAt(new Date())
+    	            .expiration(new Date(System.currentTimeMillis() + expiration))
+    	            .signWith(getSignKey())
+    	            .compact();
     }
 
     public String extractUsername(String token) {

@@ -28,13 +28,14 @@ public class SecurityConfig {
                     session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
 
-                    // Public APIs
-                    .requestMatchers(HttpMethod.GET, "/api/products/**").permitAll()
+                    // Public GET APIs (Order Service Feign call bhi yahin se aayega)
+                    .requestMatchers(HttpMethod.GET, "/api/product/**").permitAll()
+                    .requestMatchers(HttpMethod.GET, "/api/getAllProducts").permitAll()
 
                     // Admin Only
-                    .requestMatchers(HttpMethod.POST, "/api/products/**").hasRole("ADMIN")
-                    .requestMatchers(HttpMethod.PUT, "/api/products/**").hasRole("ADMIN")
-                    .requestMatchers(HttpMethod.DELETE, "/api/products/**").hasRole("ADMIN")
+                    .requestMatchers(HttpMethod.POST, "/api/createProduct").hasRole("ADMIN")
+                    .requestMatchers(HttpMethod.PUT, "/api/product/**").hasRole("ADMIN")
+                    .requestMatchers(HttpMethod.DELETE, "/api/product/**").hasRole("ADMIN")
 
                     .anyRequest().authenticated()
             )

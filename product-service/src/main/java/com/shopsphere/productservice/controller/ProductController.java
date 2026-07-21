@@ -12,7 +12,7 @@ import com.shopsphere.productservice.service.ProductService;
 import jakarta.validation.Valid;
 
 @RestController
-@RequestMapping("/api/products")
+@RequestMapping("/api")
 public class ProductController {
 
     private final ProductService productService;
@@ -22,33 +22,33 @@ public class ProductController {
     }
 
     // Add Product
-    @PostMapping
+    @PostMapping("/createProduct")
     @ResponseStatus(HttpStatus.CREATED)
     public ProductResponse addProduct(@Valid @RequestBody ProductRequest request) {
         return productService.addProduct(request);
     }
 
     // Get All Products
-    @GetMapping
+    @GetMapping("/getAllProducts")
     public List<ProductResponse> getAllProducts() {
         return productService.getAllProducts();
     }
 
     // Get Product By Id
-    @GetMapping("/{id}")
+    @GetMapping("/product/{id}")
     public ProductResponse getProductById(@PathVariable Long id) {
         return productService.getProductById(id);
     }
 
     // Update Product
-    @PutMapping("/{id}")
+    @PutMapping("/product/{id}")
     public ProductResponse updateProduct(@PathVariable Long id,
                                          @Valid @RequestBody ProductRequest request) {
         return productService.updateProduct(id, request);
     }
 
     // Delete Product
-    @DeleteMapping("/{id}")
+    @DeleteMapping("/product/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteProduct(@PathVariable Long id) {
         productService.deleteProduct(id);
