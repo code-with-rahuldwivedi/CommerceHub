@@ -8,7 +8,7 @@ spring:
   datasource:
     url: jdbc:mysql://localhost:3306/shopsphere_order_db
     username: root
-    password: Rahul@2026#D
+    password: ${SPRING_DATASOURCE_PASSWORD:changeme}
 
   jpa:
     hibernate:
