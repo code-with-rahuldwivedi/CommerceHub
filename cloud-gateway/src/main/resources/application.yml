@@ -103,4 +103,4 @@ resilience4j:
         timeoutDuration: 4s
 
 jwt:
-  secret: VGhpc0lzQVN1cGVyU2VjcmV0S2V5Rm9yQ29tbWVyY2VIdWJKV1QxMjM0NTY3ODkwMTIzNDU2
+  secret: =${JWT_SECRET:8h+R6ZjsldTujIHbtwSrsHUt7VsADEYZjnWybZuo8ho=}
