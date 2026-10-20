@@ -31,7 +31,18 @@ public class Order {
         status = OrderStatus.PENDING;
     }
 
+    @Column(name = "idempotency_key", unique = true, length = 100)
+    private String idempotencyKey;
+
     // Getters and Setters
+    public String getIdempotencyKey() {
+        return idempotencyKey;
+    }
+
+    public void setIdempotencyKey(String idempotencyKey) {
+        this.idempotencyKey = idempotencyKey;
+    }
+
     public Long getId() {
         return id;
     }

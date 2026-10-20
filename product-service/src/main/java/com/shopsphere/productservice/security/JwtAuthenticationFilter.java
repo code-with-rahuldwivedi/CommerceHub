@@ -1,3 +1,4 @@
+
 package com.shopsphere.productservice.security;
 
 import java.io.IOException;
@@ -26,9 +27,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request,
-                                    HttpServletResponse response,
-                                    FilterChain filterChain)
+    protected void doFilterInternal(
+            HttpServletRequest request,
+            HttpServletResponse response,
+            FilterChain filterChain)
             throws ServletException, IOException {
 
         String authHeader = request.getHeader("Authorization");
@@ -38,30 +40,72 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return;
         }
 
-        String token = authHeader.substring(7);
+        String token = authHeader.substring(7).trim();
 
-        if (!jwtService.isTokenValid(token)) {
-            filterChain.doFilter(request, response);
+        try {
+            if (token.isEmpty() || !jwtService.isTokenValid(token)) {
+                SecurityContextHolder.clearContext();
+                response.sendError(
+                        HttpServletResponse.SC_UNAUTHORIZED,
+                        "Invalid or expired JWT token"
+                );
+                return;
+            }
+
+            Claims claims = jwtService.extractAllClaims(token);
+
+            String username = claims.getSubject();
+            String role = claims.get("role", String.class);
+
+            if (username == null || username.isBlank()
+                    || role == null || role.isBlank()) {
+                SecurityContextHolder.clearContext();
+                response.sendError(
+                        HttpServletResponse.SC_UNAUTHORIZED,
+                        "JWT subject or role is missing"
+                );
+                return;
+            }
+
+            role = role.trim();
+
+            if (role.startsWith("ROLE_")) {
+                role = role.substring(5);
+            }
+
+            UsernamePasswordAuthenticationToken authentication =
+                    new UsernamePasswordAuthenticationToken(
+                            username,
+                            null,
+                            List.of(
+                                    new SimpleGrantedAuthority("ROLE_" + role)
+                            )
+                    );
+
+            authentication.setDetails(
+                    new WebAuthenticationDetailsSource()
+                            .buildDetails(request)
+            );
+
+            SecurityContextHolder.getContext()
+                    .setAuthentication(authentication);
+
+            // Temporary debugging; do not print the JWT itself.
+            System.out.println("JWT Username: " + username);
+            System.out.println("JWT Role: " + role);
+            System.out.println(
+                    "Authorities: " + authentication.getAuthorities()
+            );
+
+        } catch (io.jsonwebtoken.JwtException
+                 | IllegalArgumentException ex) {
+            SecurityContextHolder.clearContext();
+            response.sendError(
+                    HttpServletResponse.SC_UNAUTHORIZED,
+                    "Invalid JWT token"
+            );
             return;
         }
-
-        Claims claims = jwtService.extractAllClaims(token);
-
-        String username = claims.getSubject();
-        String role = claims.get("role", String.class);
-
-        UsernamePasswordAuthenticationToken authentication =
-                new UsernamePasswordAuthenticationToken(
-                        username,
-                        null,
-                        List.of(new SimpleGrantedAuthority("ROLE_" + role))
-                );
-
-        authentication.setDetails(
-                new WebAuthenticationDetailsSource().buildDetails(request)
-        );
-
-        SecurityContextHolder.getContext().setAuthentication(authentication);
 
         filterChain.doFilter(request, response);
     }

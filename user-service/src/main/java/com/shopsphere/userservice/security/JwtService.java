@@ -25,11 +25,13 @@ public class JwtService {
     @Value("${jwt.expiration}")
     private long expiration;
 
+    //Convert Base64 Secret into Key
     private Key getSignKey() {
         byte[] keyBytes = Decoders.BASE64.decode(secret);
         return Keys.hmacShaKeyFor(keyBytes);
     }
 
+    //Generate JWT Token
     public String generateToken(User user) {
 
     	 Map<String, Object> claims = new HashMap<>();
@@ -44,19 +46,23 @@ public class JwtService {
     	            .compact();
     }
 
+    //Extract Email from JWT Token
     public String extractUsername(String token) {
         return extractAllClaims(token).getSubject();
     }
 
+    //Validate Token
     public boolean isTokenValid(String token, UserDetails userDetails) {
         final String username = extractUsername(token);
         return username.equals(userDetails.getUsername()) && !isTokenExpired(token);
     }
 
+    //Check Token Expired or Not
     private boolean isTokenExpired(String token) {
         return extractAllClaims(token).getExpiration().before(new Date());
     }
 
+    //Extract All Claims from JWT
     private Claims extractAllClaims(String token) {
         return Jwts.parser()
                 .verifyWith((javax.crypto.SecretKey) getSignKey())

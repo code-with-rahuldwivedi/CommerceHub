@@ -5,5 +5,8 @@ import com.shopsphere.orderservice.dto.OrderResponse;
 
 public interface OrderService {
 
-    OrderResponse placeOrder(OrderRequest request);
+	OrderResponse placeOrder(
+	        OrderRequest request,
+	        String idempotencyKey
+	);
 }

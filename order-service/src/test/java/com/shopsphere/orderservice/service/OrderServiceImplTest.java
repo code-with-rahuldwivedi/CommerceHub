@@ -1,9 +1,11 @@
+
 package com.shopsphere.orderservice.service;
 
 import com.shopsphere.orderservice.client.ProductClient;
 import com.shopsphere.orderservice.dto.OrderRequest;
 import com.shopsphere.orderservice.dto.OrderResponse;
 import com.shopsphere.orderservice.dto.ProductResponse;
+import com.shopsphere.orderservice.dto.StockUpdateRequest;
 import com.shopsphere.orderservice.entity.Order;
 import com.shopsphere.orderservice.entity.OrderStatus;
 import com.shopsphere.orderservice.repository.OrderRepository;
@@ -11,13 +13,18 @@ import com.shopsphere.orderservice.repository.OrderRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -26,11 +33,17 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class OrderServiceImplTest {
 
+    private static final String IDEMPOTENCY_KEY = "shop-order-001";
+    private static final String STOCK_REDUCE_KEY = "order-500-reduce";
+
     @Mock
     private OrderRepository orderRepository;
 
     @Mock
     private ProductClient productClient;
+
+    @Mock
+    private OrderPersistenceService orderPersistenceService;
 
     @InjectMocks
     private OrderServiceImpl orderService;
@@ -52,100 +65,286 @@ class OrderServiceImplTest {
         productResponse.setStock(10);
     }
 
-    // Helper: simulate what the DB would return after save(), since @PrePersist
-    // never fires on a mocked repository.
-    private Order fakeSavedOrder(BigDecimal totalPrice) {
-        Order saved = new Order();
-        saved.setId(500L);
-        saved.setUserId(orderRequest.getUserId());
-        saved.setProductId(orderRequest.getProductId());
-        saved.setQuantity(orderRequest.getQuantity());
-        saved.setTotalPrice(totalPrice);
-        saved.setStatus(OrderStatus.PENDING);
-        saved.setOrderDate(LocalDateTime.now());
-        return saved;
+    private void givenNewOrder() {
+        when(orderRepository.findByIdempotencyKey(IDEMPOTENCY_KEY))
+                .thenReturn(Optional.empty());
+
+        when(productClient.getProductById(101L))
+                .thenReturn(productResponse);
+    }
+
+    private void givenSuccessfulSave() {
+        when(orderPersistenceService.saveOrder(any(Order.class)))
+                .thenAnswer(invocation -> {
+                    Order order = invocation.getArgument(0);
+
+                    order.setId(500L);
+                    order.setStatus(OrderStatus.PENDING);
+                    order.setOrderDate(LocalDateTime.now());
+
+                    return order;
+                });
+    }
+
+    private Order createExistingOrder() {
+        Order order = new Order();
+        order.setId(500L);
+        order.setUserId(1L);
+        order.setProductId(101L);
+        order.setQuantity(2);
+        order.setTotalPrice(new BigDecimal("1599.98"));
+        order.setIdempotencyKey(IDEMPOTENCY_KEY);
+        order.setStatus(OrderStatus.PENDING);
+        order.setOrderDate(LocalDateTime.now());
+
+        return order;
     }
 
     @Test
-    void placeOrder_ShouldCalculateTotalPriceCorrectly_WhenStockIsSufficient() {
-        when(productClient.getProductById(101L)).thenReturn(productResponse);
+    void placeOrder_ShouldCalculateTotalPriceCorrectly() {
+        givenNewOrder();
+        givenSuccessfulSave();
 
-        BigDecimal expectedTotal = new BigDecimal("1599.98"); // 799.99 * 2
-        when(orderRepository.save(any(Order.class))).thenReturn(fakeSavedOrder(expectedTotal));
+        OrderResponse response =
+                orderService.placeOrder(orderRequest, IDEMPOTENCY_KEY);
 
-        OrderResponse response = orderService.placeOrder(orderRequest);
-
-        assertEquals(0, expectedTotal.compareTo(response.getTotalPrice()),
-                "Total price should equal unit price * quantity");
+        assertNotNull(response);
+        assertEquals(
+                0,
+                new BigDecimal("1599.98")
+                        .compareTo(response.getTotalPrice())
+        );
     }
 
     @Test
-    void placeOrder_ShouldSaveOrderWithCorrectlyComputedTotal_UsingCapturedArgument() {
-        when(productClient.getProductById(101L)).thenReturn(productResponse);
-        when(orderRepository.save(any(Order.class))).thenAnswer(invocation -> invocation.getArgument(0));
+    void placeOrder_ShouldSaveOrderWithCorrectFields() {
+        givenNewOrder();
+        givenSuccessfulSave();
 
-        ArgumentCaptor<Order> orderCaptor = ArgumentCaptor.forClass(Order.class);
+        orderService.placeOrder(orderRequest, IDEMPOTENCY_KEY);
 
-        orderService.placeOrder(orderRequest);
+        ArgumentCaptor<Order> captor =
+                ArgumentCaptor.forClass(Order.class);
 
-        verify(orderRepository).save(orderCaptor.capture());
-        Order savedOrder = orderCaptor.getValue();
+        verify(orderPersistenceService).saveOrder(captor.capture());
 
-        // 799.99 * 2 = 1599.98 -- verifying the exact value passed to save(), not just the response
-        assertEquals(0, new BigDecimal("1599.98").compareTo(savedOrder.getTotalPrice()));
-        assertEquals(orderRequest.getUserId(), savedOrder.getUserId());
-        assertEquals(orderRequest.getProductId(), savedOrder.getProductId());
-        assertEquals(orderRequest.getQuantity(), savedOrder.getQuantity());
+        Order savedOrder = captor.getValue();
+
+        assertEquals(1L, savedOrder.getUserId());
+        assertEquals(101L, savedOrder.getProductId());
+        assertEquals(2, savedOrder.getQuantity());
+        assertEquals(IDEMPOTENCY_KEY, savedOrder.getIdempotencyKey());
+
+        assertEquals(
+                0,
+                new BigDecimal("1599.98")
+                        .compareTo(savedOrder.getTotalPrice())
+        );
     }
 
     @Test
-    void placeOrder_ShouldThrowException_WhenStockIsInsufficient() {
-        orderRequest.setQuantity(50); // more than available stock (10)
-        when(productClient.getProductById(101L)).thenReturn(productResponse);
+    void placeOrder_ShouldReduceStockWithOrderSpecificKey() {
+        givenNewOrder();
+        givenSuccessfulSave();
 
-        RuntimeException exception =
-                assertThrows(RuntimeException.class, () -> orderService.placeOrder(orderRequest));
+        orderService.placeOrder(orderRequest, IDEMPOTENCY_KEY);
 
-        assertEquals("Insufficient stock", exception.getMessage());
-        // Order must never be saved if stock check fails
-        verify(orderRepository, never()).save(any(Order.class));
+        ArgumentCaptor<StockUpdateRequest> captor =
+                ArgumentCaptor.forClass(StockUpdateRequest.class);
+
+        verify(productClient).reduceStock(
+                eq(101L),
+                eq(STOCK_REDUCE_KEY),
+                captor.capture()
+        );
+
+        assertEquals(2, captor.getValue().getQuantity());
     }
 
     @Test
-    void placeOrder_ShouldAllowOrder_WhenQuantityExactlyMatchesAvailableStock() {
-        orderRequest.setQuantity(10); // exactly equal to stock (10) — boundary case
-        when(productClient.getProductById(101L)).thenReturn(productResponse);
-        when(orderRepository.save(any(Order.class)))
-                .thenReturn(fakeSavedOrder(new BigDecimal("7999.90")));
+    void placeOrder_ShouldReturn409WhenStockIsInsufficient() {
+        orderRequest.setQuantity(50);
+        givenNewOrder();
 
-        assertDoesNotThrow(() -> orderService.placeOrder(orderRequest));
-        verify(orderRepository, times(1)).save(any(Order.class));
+        ResponseStatusException exception = assertThrows(
+                ResponseStatusException.class,
+                () -> orderService.placeOrder(
+                        orderRequest,
+                        IDEMPOTENCY_KEY
+                )
+        );
+
+        assertEquals(HttpStatus.CONFLICT, exception.getStatusCode());
+
+        verify(orderPersistenceService, never())
+                .saveOrder(any(Order.class));
+
+        verify(productClient, never())
+                .reduceStock(
+                        anyLong(),
+                        anyString(),
+                        any(StockUpdateRequest.class)
+                );
     }
 
     @Test
-    void placeOrder_ShouldCallProductClientWithCorrectProductId() {
-        when(productClient.getProductById(101L)).thenReturn(productResponse);
-        when(orderRepository.save(any(Order.class)))
-                .thenReturn(fakeSavedOrder(new BigDecimal("1599.98")));
+    void placeOrder_ShouldReturnExistingOrderForSameKeyAndRequest() {
+        Order existingOrder = createExistingOrder();
 
-        orderService.placeOrder(orderRequest);
+        when(orderRepository.findByIdempotencyKey(IDEMPOTENCY_KEY))
+                .thenReturn(Optional.of(existingOrder));
 
-        verify(productClient, times(1)).getProductById(101L);
+        OrderResponse response =
+                orderService.placeOrder(orderRequest, IDEMPOTENCY_KEY);
+
+        assertEquals(500L, response.getId());
+        assertEquals(101L, response.getProductId());
+        assertEquals(2, response.getQuantity());
+
+        verify(productClient, never()).getProductById(anyLong());
+
+        verify(productClient, never())
+                .reduceStock(
+                        anyLong(),
+                        anyString(),
+                        any(StockUpdateRequest.class)
+                );
+
+        verify(orderPersistenceService, never())
+                .saveOrder(any(Order.class));
     }
 
     @Test
-    void placeOrder_ShouldMapSavedOrderFieldsCorrectlyToResponse() {
-        when(productClient.getProductById(101L)).thenReturn(productResponse);
-        Order saved = fakeSavedOrder(new BigDecimal("1599.98"));
-        when(orderRepository.save(any(Order.class))).thenReturn(saved);
+    void placeOrder_ShouldReturn409WhenKeyIsReusedWithDifferentRequest() {
+        Order existingOrder = createExistingOrder();
 
-        OrderResponse response = orderService.placeOrder(orderRequest);
+        when(orderRepository.findByIdempotencyKey(IDEMPOTENCY_KEY))
+                .thenReturn(Optional.of(existingOrder));
 
-        assertEquals(saved.getId(), response.getId());
-        assertEquals(saved.getUserId(), response.getUserId());
-        assertEquals(saved.getProductId(), response.getProductId());
-        assertEquals(saved.getQuantity(), response.getQuantity());
-        assertEquals(saved.getStatus(), response.getStatus());
+        orderRequest.setQuantity(5);
+
+        ResponseStatusException exception = assertThrows(
+                ResponseStatusException.class,
+                () -> orderService.placeOrder(
+                        orderRequest,
+                        IDEMPOTENCY_KEY
+                )
+        );
+
+        assertEquals(HttpStatus.CONFLICT, exception.getStatusCode());
+
+        verify(productClient, never())
+                .reduceStock(
+                        anyLong(),
+                        anyString(),
+                        any(StockUpdateRequest.class)
+                );
+
+        verify(orderPersistenceService, never())
+                .saveOrder(any(Order.class));
+    }
+
+    @Test
+    void placeOrder_ShouldNotReduceStockWhenOrderSaveFails() {
+        givenNewOrder();
+
+        RuntimeException databaseFailure =
+                new RuntimeException("Order database failure");
+
+        when(orderPersistenceService.saveOrder(any(Order.class)))
+                .thenThrow(databaseFailure);
+
+        RuntimeException thrown = assertThrows(
+                RuntimeException.class,
+                () -> orderService.placeOrder(
+                        orderRequest,
+                        IDEMPOTENCY_KEY
+                )
+        );
+
+        assertSame(databaseFailure, thrown);
+
+        verify(productClient, never())
+                .reduceStock(
+                        anyLong(),
+                        anyString(),
+                        any(StockUpdateRequest.class)
+                );
+
+        verify(productClient, never())
+                .restoreStock(
+                        anyLong(),
+                        anyString(),
+                        any(StockUpdateRequest.class)
+                );
+    }
+
+    @Test
+    void placeOrder_ShouldReturn503WhenStockReductionFails() {
+        givenNewOrder();
+        givenSuccessfulSave();
+
+        when(productClient.reduceStock(
+                eq(101L),
+                eq(STOCK_REDUCE_KEY),
+                any(StockUpdateRequest.class)
+        )).thenThrow(new RuntimeException("Product service unavailable"));
+
+        ResponseStatusException exception = assertThrows(
+                ResponseStatusException.class,
+                () -> orderService.placeOrder(
+                        orderRequest,
+                        IDEMPOTENCY_KEY
+                )
+        );
+
+        assertEquals(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                exception.getStatusCode()
+        );
+
+        verify(orderPersistenceService).saveOrder(any(Order.class));
+
+        verify(productClient).reduceStock(
+                eq(101L),
+                eq(STOCK_REDUCE_KEY),
+                any(StockUpdateRequest.class)
+        );
+
+        // An uncertain stock result must not trigger a blind restoration.
+        verify(productClient, never())
+                .restoreStock(
+                        anyLong(),
+                        anyString(),
+                        any(StockUpdateRequest.class)
+                );
+    }
+
+    @Test
+    void placeOrder_ShouldMapSavedOrderToResponse() {
+        givenNewOrder();
+        givenSuccessfulSave();
+
+        OrderResponse response =
+                orderService.placeOrder(orderRequest, IDEMPOTENCY_KEY);
+
+        assertEquals(500L, response.getId());
+        assertEquals(1L, response.getUserId());
+        assertEquals(101L, response.getProductId());
+        assertEquals(2, response.getQuantity());
         assertEquals(OrderStatus.PENDING, response.getStatus());
+        assertNotNull(response.getOrderDate());
+    }
+
+    @Test
+    void placeOrder_ShouldRejectBlankIdempotencyKey() {
+        assertThrows(
+                ResponseStatusException.class,
+                () -> orderService.placeOrder(orderRequest, " ")
+        );
+
+        verifyNoInteractions(productClient);
+        verify(orderPersistenceService, never())
+                .saveOrder(any(Order.class));
     }
 }
