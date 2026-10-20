@@ -152,4 +152,74 @@ public class OrderServiceImpl implements OrderService {
         response.setOrderDate(order.getOrderDate());
         return response;
     }
+    
+
+	@Override
+	public OrderResponse cancelOrder(Long orderId) {
+	
+	    if (orderId == null || orderId <= 0) {
+	        throw new ResponseStatusException(
+	                HttpStatus.BAD_REQUEST,
+	                "A valid order ID is required"
+	        );
+	    }
+	
+	    Order order = orderRepository.findById(orderId)
+	            .orElseThrow(() -> new ResponseStatusException(
+	                    HttpStatus.NOT_FOUND,
+	                    "Order not found: " + orderId
+	            ));
+	
+	    // Repeated cancellation must not restore stock again.
+	    if (order.getStatus() == OrderStatus.CANCELLED) {
+	        return toResponse(order);
+	    }
+	
+	    // Only confirmed orders can be cancelled.
+	    if (order.getStatus() != OrderStatus.CONFIRMED) {
+	        throw new ResponseStatusException(
+	                HttpStatus.CONFLICT,
+	                "Only confirmed orders can be cancelled"
+	        );
+	    }
+	
+	    // Stable key: retries for this order reuse the same key.
+	    String restoreKey = "order-" + order.getId() + "-restore";
+	
+	    try {
+	        productClient.restoreStock(
+	                order.getProductId(),
+	                restoreKey,
+	                new StockUpdateRequest(order.getQuantity())
+	        );
+	    } catch (RuntimeException exception) {
+	        throw new ResponseStatusException(
+	                HttpStatus.SERVICE_UNAVAILABLE,
+	                "Stock restoration outcome is uncertain. "
+	                        + "Retry cancellation using the same order ID.",
+	                exception
+	        );
+	    }
+	
+	    // Mark cancelled only after the restore call succeeds.
+	    order.setStatus(OrderStatus.CANCELLED);
+	
+	    try {
+	        Order cancelledOrder =
+	                orderPersistenceService.saveOrder(order);
+	
+	        return toResponse(cancelledOrder);
+	
+	    } catch (RuntimeException exception) {
+	        // Stock may already have been restored.
+	        // A retry must reuse the same restoreKey.
+	        throw new ResponseStatusException(
+	                HttpStatus.SERVICE_UNAVAILABLE,
+	                "Stock may have been restored, but cancellation "
+	                        + "could not be saved. Retry the cancellation.",
+	                exception
+	        );
+	    }
+	}
+
 }

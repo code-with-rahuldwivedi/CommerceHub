@@ -1,6 +1,7 @@
 package com.shopsphere.orderservice.controller;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -31,5 +32,12 @@ public class OrderController {
             @RequestHeader("Idempotency-Key") String idempotencyKey) {
 
         return orderService.placeOrder(request, idempotencyKey);
+    }
+    
+    @PostMapping("/{orderId}/cancel")
+    public OrderResponse cancelOrder(
+            @PathVariable Long orderId) {
+
+        return orderService.cancelOrder(orderId);
     }
 }

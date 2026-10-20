@@ -1,4 +1,3 @@
-
 package com.shopsphere.orderservice.service;
 
 import com.shopsphere.orderservice.client.ProductClient;
@@ -77,11 +76,9 @@ class OrderServiceImplTest {
         when(orderPersistenceService.saveOrder(any(Order.class)))
                 .thenAnswer(invocation -> {
                     Order order = invocation.getArgument(0);
-
                     order.setId(500L);
                     order.setStatus(OrderStatus.PENDING);
                     order.setOrderDate(LocalDateTime.now());
-
                     return order;
                 });
     }
@@ -96,7 +93,6 @@ class OrderServiceImplTest {
         order.setIdempotencyKey(IDEMPOTENCY_KEY);
         order.setStatus(OrderStatus.PENDING);
         order.setOrderDate(LocalDateTime.now());
-
         return order;
     }
 
@@ -111,36 +107,42 @@ class OrderServiceImplTest {
         assertNotNull(response);
         assertEquals(
                 0,
-                new BigDecimal("1599.98")
-                        .compareTo(response.getTotalPrice())
+                new BigDecimal("1599.98").compareTo(response.getTotalPrice())
         );
     }
 
-    @Test
-    void placeOrder_ShouldSaveOrderWithCorrectFields() {
-        givenNewOrder();
-        givenSuccessfulSave();
 
-        orderService.placeOrder(orderRequest, IDEMPOTENCY_KEY);
+	@Test
+	void placeOrder_ShouldSaveOrderWithCorrectFields() {
+	    givenNewOrder();
+	    givenSuccessfulSave();
+	
+	    orderService.placeOrder(orderRequest, IDEMPOTENCY_KEY);
+	
+	    ArgumentCaptor<Order> captor =
+	            ArgumentCaptor.forClass(Order.class);
+	
+	    // Capture both save calls
+	    verify(orderPersistenceService, times(2))
+	            .saveOrder(captor.capture());
+	
+	    // First save: initial PENDING order
+	    Order firstSavedOrder = captor.getAllValues().get(0);
+	
+	    assertEquals(1L, firstSavedOrder.getUserId());
+	    assertEquals(101L, firstSavedOrder.getProductId());
+	    assertEquals(2, firstSavedOrder.getQuantity());
+	    assertEquals(
+	            IDEMPOTENCY_KEY,
+	            firstSavedOrder.getIdempotencyKey()
+	    );
+	    assertEquals(
+	            0,
+	            new BigDecimal("1599.98")
+	                    .compareTo(firstSavedOrder.getTotalPrice())
+	    );
+	}
 
-        ArgumentCaptor<Order> captor =
-                ArgumentCaptor.forClass(Order.class);
-
-        verify(orderPersistenceService).saveOrder(captor.capture());
-
-        Order savedOrder = captor.getValue();
-
-        assertEquals(1L, savedOrder.getUserId());
-        assertEquals(101L, savedOrder.getProductId());
-        assertEquals(2, savedOrder.getQuantity());
-        assertEquals(IDEMPOTENCY_KEY, savedOrder.getIdempotencyKey());
-
-        assertEquals(
-                0,
-                new BigDecimal("1599.98")
-                        .compareTo(savedOrder.getTotalPrice())
-        );
-    }
 
     @Test
     void placeOrder_ShouldReduceStockWithOrderSpecificKey() {
@@ -169,8 +171,7 @@ class OrderServiceImplTest {
         ResponseStatusException exception = assertThrows(
                 ResponseStatusException.class,
                 () -> orderService.placeOrder(
-                        orderRequest,
-                        IDEMPOTENCY_KEY
+                        orderRequest, IDEMPOTENCY_KEY
                 )
         );
 
@@ -179,12 +180,11 @@ class OrderServiceImplTest {
         verify(orderPersistenceService, never())
                 .saveOrder(any(Order.class));
 
-        verify(productClient, never())
-                .reduceStock(
-                        anyLong(),
-                        anyString(),
-                        any(StockUpdateRequest.class)
-                );
+        verify(productClient, never()).reduceStock(
+                anyLong(),
+                anyString(),
+                any(StockUpdateRequest.class)
+        );
     }
 
     @Test
@@ -203,12 +203,11 @@ class OrderServiceImplTest {
 
         verify(productClient, never()).getProductById(anyLong());
 
-        verify(productClient, never())
-                .reduceStock(
-                        anyLong(),
-                        anyString(),
-                        any(StockUpdateRequest.class)
-                );
+        verify(productClient, never()).reduceStock(
+                anyLong(),
+                anyString(),
+                any(StockUpdateRequest.class)
+        );
 
         verify(orderPersistenceService, never())
                 .saveOrder(any(Order.class));
@@ -226,19 +225,17 @@ class OrderServiceImplTest {
         ResponseStatusException exception = assertThrows(
                 ResponseStatusException.class,
                 () -> orderService.placeOrder(
-                        orderRequest,
-                        IDEMPOTENCY_KEY
+                        orderRequest, IDEMPOTENCY_KEY
                 )
         );
 
         assertEquals(HttpStatus.CONFLICT, exception.getStatusCode());
 
-        verify(productClient, never())
-                .reduceStock(
-                        anyLong(),
-                        anyString(),
-                        any(StockUpdateRequest.class)
-                );
+        verify(productClient, never()).reduceStock(
+                anyLong(),
+                anyString(),
+                any(StockUpdateRequest.class)
+        );
 
         verify(orderPersistenceService, never())
                 .saveOrder(any(Order.class));
@@ -257,26 +254,23 @@ class OrderServiceImplTest {
         RuntimeException thrown = assertThrows(
                 RuntimeException.class,
                 () -> orderService.placeOrder(
-                        orderRequest,
-                        IDEMPOTENCY_KEY
+                        orderRequest, IDEMPOTENCY_KEY
                 )
         );
 
         assertSame(databaseFailure, thrown);
 
-        verify(productClient, never())
-                .reduceStock(
-                        anyLong(),
-                        anyString(),
-                        any(StockUpdateRequest.class)
-                );
+        verify(productClient, never()).reduceStock(
+                anyLong(),
+                anyString(),
+                any(StockUpdateRequest.class)
+        );
 
-        verify(productClient, never())
-                .restoreStock(
-                        anyLong(),
-                        anyString(),
-                        any(StockUpdateRequest.class)
-                );
+        verify(productClient, never()).restoreStock(
+                anyLong(),
+                anyString(),
+                any(StockUpdateRequest.class)
+        );
     }
 
     @Test
@@ -293,8 +287,7 @@ class OrderServiceImplTest {
         ResponseStatusException exception = assertThrows(
                 ResponseStatusException.class,
                 () -> orderService.placeOrder(
-                        orderRequest,
-                        IDEMPOTENCY_KEY
+                        orderRequest, IDEMPOTENCY_KEY
                 )
         );
 
@@ -311,13 +304,12 @@ class OrderServiceImplTest {
                 any(StockUpdateRequest.class)
         );
 
-        // An uncertain stock result must not trigger a blind restoration.
-        verify(productClient, never())
-                .restoreStock(
-                        anyLong(),
-                        anyString(),
-                        any(StockUpdateRequest.class)
-                );
+        // Do not blindly restore stock when the reduction outcome is uncertain.
+        verify(productClient, never()).restoreStock(
+                anyLong(),
+                anyString(),
+                any(StockUpdateRequest.class)
+        );
     }
 
     @Test
@@ -344,6 +336,88 @@ class OrderServiceImplTest {
         );
 
         verifyNoInteractions(productClient);
+
+        verify(orderPersistenceService, never())
+                .saveOrder(any(Order.class));
+    }
+
+    @Test
+    void cancelOrder_ShouldRestoreStockAndSaveCancelledStatus() {
+        Order order = createExistingOrder();
+        order.setStatus(OrderStatus.CONFIRMED);
+
+        when(orderRepository.findById(500L))
+                .thenReturn(Optional.of(order));
+
+        when(orderPersistenceService.saveOrder(any(Order.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        OrderResponse response = orderService.cancelOrder(500L);
+
+        assertEquals(OrderStatus.CANCELLED, response.getStatus());
+
+        verify(productClient).restoreStock(
+                eq(101L),
+                eq("order-500-restore"),
+                argThat(request -> request.getQuantity() == 2)
+        );
+
+        verify(orderPersistenceService).saveOrder(
+                argThat(savedOrder ->
+                        savedOrder.getStatus() == OrderStatus.CANCELLED)
+        );
+    }
+
+    @Test
+    void cancelOrder_ShouldNotRestoreStockAgainWhenAlreadyCancelled() {
+        Order order = createExistingOrder();
+        order.setStatus(OrderStatus.CANCELLED);
+
+        when(orderRepository.findById(500L))
+                .thenReturn(Optional.of(order));
+
+        OrderResponse response = orderService.cancelOrder(500L);
+
+        assertEquals(OrderStatus.CANCELLED, response.getStatus());
+
+        verify(productClient, never()).restoreStock(
+                anyLong(),
+                anyString(),
+                any(StockUpdateRequest.class)
+        );
+
+        verify(orderPersistenceService, never())
+                .saveOrder(any(Order.class));
+    }
+
+    @Test
+    void cancelOrder_ShouldReturn503WhenStockRestoreFails() {
+        Order order = createExistingOrder();
+        order.setStatus(OrderStatus.CONFIRMED);
+
+        when(orderRepository.findById(500L))
+                .thenReturn(Optional.of(order));
+
+        doThrow(new RuntimeException("Product service unavailable"))
+                .when(productClient)
+                .restoreStock(
+                        eq(101L),
+                        eq("order-500-restore"),
+                        any(StockUpdateRequest.class)
+                );
+
+        ResponseStatusException exception = assertThrows(
+                ResponseStatusException.class,
+                () -> orderService.cancelOrder(500L)
+        );
+
+        assertEquals(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                exception.getStatusCode()
+        );
+
+        assertEquals(OrderStatus.CONFIRMED, order.getStatus());
+
         verify(orderPersistenceService, never())
                 .saveOrder(any(Order.class));
     }

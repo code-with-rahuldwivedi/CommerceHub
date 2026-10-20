@@ -9,4 +9,6 @@ public interface OrderService {
 	        OrderRequest request,
 	        String idempotencyKey
 	);
+	
+	OrderResponse cancelOrder(Long orderId);
 }
