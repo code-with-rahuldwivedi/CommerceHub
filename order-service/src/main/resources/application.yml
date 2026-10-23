@@ -28,3 +28,7 @@ eureka:
   client:
     service-url:
       defaultZone: http://localhost:8761/eureka/
+
+inventory:
+  service:
+    token: ${INVENTORY_SERVICE_TOKEN}

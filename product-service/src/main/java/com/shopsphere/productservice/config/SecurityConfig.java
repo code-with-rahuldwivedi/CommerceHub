@@ -31,8 +31,6 @@ public class SecurityConfig {
                     .requestMatchers(HttpMethod.GET, "/api/product/**").permitAll()
                     .requestMatchers(HttpMethod.GET, "/api/getAllProducts").permitAll()
                     // Admin Only
-                    .requestMatchers(HttpMethod.POST,"/api/product/*/restore-stock").hasRole("ADMIN")
-                    .requestMatchers(HttpMethod.POST, "/api/product/*/reduce-stock").permitAll()
                     .requestMatchers(HttpMethod.POST, "/api/createProduct").hasRole("ADMIN")
                     .requestMatchers(HttpMethod.PUT, "/api/product/**").hasRole("ADMIN")
                     .requestMatchers(HttpMethod.DELETE, "/api/product/**").hasRole("ADMIN")

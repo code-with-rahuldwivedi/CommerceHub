@@ -1,18 +1,22 @@
-
 package com.shopsphere.orderservice.config;
 
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import feign.RequestInterceptor;
 import jakarta.servlet.http.HttpServletRequest;
 
-@Configuration
+/**
+ * Forwards the caller's Bearer token to a Feign client.
+ *
+ * Intentionally NOT annotated with @Configuration. If it were, Spring would
+ * component-scan it and apply it to every Feign client (including
+ * InventoryClient). It is attached only to the clients that need it via
+ * @FeignClient(configuration = FeignAuthConfig.class).
+ */
 public class FeignAuthConfig {
 
-    @Bean
+    @org.springframework.context.annotation.Bean
     public RequestInterceptor authorizationHeaderForwarder() {
         return template -> {
             var attributes =
@@ -33,4 +37,3 @@ public class FeignAuthConfig {
         };
     }
 }
-	
