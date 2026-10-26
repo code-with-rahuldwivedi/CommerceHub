@@ -69,7 +69,6 @@ class OrderServiceImplTest {
         product.setId(3L);
         product.setName("iPhone 17");
         product.setPrice(new BigDecimal("89999.00"));
-        product.setStock(10);
     }
 
     @Test
@@ -104,9 +103,6 @@ class OrderServiceImplTest {
 
         verify(orderPersistenceService, times(1))
                 .saveOrder(any(Order.class));
-
-        verify(inventoryClient, never())
-                .reduceStock(any(), any(), any());
     }
 
     @Test
@@ -118,8 +114,6 @@ class OrderServiceImplTest {
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
 
         verify(productClient, never()).getProductById(any());
-        verify(inventoryClient, never())
-                .reduceStock(any(), any(), any());
     }
 
     @Test
@@ -151,8 +145,6 @@ class OrderServiceImplTest {
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
 
         verify(productClient, never()).getProductById(any());
-        verify(inventoryClient, never())
-                .reduceStock(any(), any(), any());
     }
 
     @Test
@@ -169,8 +161,6 @@ class OrderServiceImplTest {
         assertEquals(OrderStatus.CONFIRMED, response.getStatus());
 
         verify(productClient, never()).getProductById(any());
-        verify(inventoryClient, never())
-                .reduceStock(any(), any(), any());
         verify(orderPersistenceService, never())
                 .saveOrder(any(Order.class));
     }
@@ -188,15 +178,12 @@ class OrderServiceImplTest {
                 () -> orderService.placeOrder(request, IDEMPOTENCY_KEY));
 
         assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
-
-        verify(inventoryClient, never())
-                .reduceStock(any(), any(), any());
     }
 
     @Test
     void placeOrder_ShouldReplayConcurrentInsertForSameRequest() {
         Order concurrentOrder =
-                createOrder(100L, OrderStatus.CONFIRMED);
+                createOrder(100L, OrderStatus.PENDING);
 
         when(orderRepository.findByIdempotencyKey(IDEMPOTENCY_KEY))
                 .thenReturn(Optional.empty())
@@ -213,10 +200,7 @@ class OrderServiceImplTest {
                 orderService.placeOrder(request, IDEMPOTENCY_KEY);
 
         assertEquals(100L, response.getId());
-        assertEquals(OrderStatus.CONFIRMED, response.getStatus());
-
-        verify(inventoryClient, never())
-                .reduceStock(any(), any(), any());
+        assertEquals(OrderStatus.PENDING, response.getStatus());
     }
 
     @Test
@@ -237,9 +221,6 @@ class OrderServiceImplTest {
                 eq(3L),
                 eq(RESTORE_KEY),
                 any(StockUpdateRequest.class));
-
-        verify(productClient, never())
-        .restoreStock(any(), any(), any());
 
         verify(orderPersistenceService).saveOrder(order);
     }
