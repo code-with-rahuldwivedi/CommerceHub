@@ -19,8 +19,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 @Component
-public class ServiceTokenAuthenticationFilter
-        extends OncePerRequestFilter {
+public class ServiceTokenAuthenticationFilter extends OncePerRequestFilter {
 
     private static final String SERVICE_HEADER = "X-Service-Token";
 
@@ -34,8 +33,7 @@ public class ServiceTokenAuthenticationFilter
                     "INVENTORY_SERVICE_TOKEN must be configured");
         }
 
-        this.expectedToken =
-                serviceToken.getBytes(StandardCharsets.UTF_8);
+        this.expectedToken = serviceToken.getBytes(StandardCharsets.UTF_8);
     }
 
     @Override
@@ -59,7 +57,10 @@ public class ServiceTokenAuthenticationFilter
         String suppliedToken = request.getHeader(SERVICE_HEADER);
 
         if (suppliedToken == null || suppliedToken.isBlank()) {
-            filterChain.doFilter(request, response);
+            SecurityContextHolder.clearContext();
+            response.sendError(
+                    HttpServletResponse.SC_UNAUTHORIZED,
+                    "Service credentials are required");
             return;
         }
 
@@ -79,11 +80,9 @@ public class ServiceTokenAuthenticationFilter
                 new UsernamePasswordAuthenticationToken(
                         "order-service",
                         null,
-                        List.of(
-                                new SimpleGrantedAuthority("ROLE_SERVICE")));
+                        List.of(new SimpleGrantedAuthority("ROLE_SERVICE")));
 
-        SecurityContextHolder.getContext()
-                .setAuthentication(authentication);
+        SecurityContextHolder.getContext().setAuthentication(authentication);
 
         filterChain.doFilter(request, response);
     }

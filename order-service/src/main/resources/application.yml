@@ -1,3 +1,7 @@
+outbox:
+  publisher:
+    topic: order-events
+
 server:
   port: 8083
 
@@ -13,17 +17,27 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
-        format_sql: true
+        format_sql: false
+
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      group-id: order-service-group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
 
   cloud:
     openfeign:
       httpclient:
         hc5:
           enabled: true
-
 eureka:
   client:
     service-url:
@@ -32,3 +46,5 @@ eureka:
 inventory:
   service:
     token: ${INVENTORY_SERVICE_TOKEN}
+  kafka:
+    result-topic: inventory-events

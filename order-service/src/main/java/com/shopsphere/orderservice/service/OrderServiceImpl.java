@@ -15,12 +15,9 @@ import com.shopsphere.orderservice.client.ProductClient;
 import com.shopsphere.orderservice.dto.OrderRequest;
 import com.shopsphere.orderservice.dto.OrderResponse;
 import com.shopsphere.orderservice.dto.ProductResponse;
-import com.shopsphere.orderservice.dto.StockUpdateRequest;
 import com.shopsphere.orderservice.entity.Order;
 import com.shopsphere.orderservice.entity.OrderStatus;
 import com.shopsphere.orderservice.repository.OrderRepository;
-
-import feign.FeignException;
 
 @Service
 public class OrderServiceImpl implements OrderService {
@@ -50,14 +47,17 @@ public class OrderServiceImpl implements OrderService {
             OrderRequest request,
             String idempotencyKey) {
 
+        // Validate idempotency key.
         if (idempotencyKey == null
                 || idempotencyKey.isBlank()
                 || idempotencyKey.trim().length() > 100) {
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "A valid Idempotency-Key is required");
         }
 
+        // Validate order request.
         if (request == null
                 || request.getUserId() == null
                 || request.getUserId() <= 0
@@ -65,6 +65,7 @@ public class OrderServiceImpl implements OrderService {
                 || request.getProductId() <= 0
                 || request.getQuantity() == null
                 || request.getQuantity() <= 0) {
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "Valid user, product and positive quantity are required");
@@ -72,21 +73,24 @@ public class OrderServiceImpl implements OrderService {
 
         String key = idempotencyKey.trim();
 
-        Order existing = orderRepository
+        // Return an existing order when the same request is retried.
+        Order existingOrder = orderRepository
                 .findByIdempotencyKey(key)
                 .orElse(null);
 
-        if (existing != null) {
-            validateSameRequest(existing, request);
-            return toResponse(existing);
+        if (existingOrder != null) {
+            validateSameRequest(existingOrder, request);
+            return toResponse(existingOrder);
         }
 
-        // Product Service is used only for product details and price.
+        // Fetch product details and price.
         ProductResponse product =
                 productClient.getProductById(request.getProductId());
 
-        if (product == null || product.getPrice() == null
+        if (product == null
+                || product.getPrice() == null
                 || product.getPrice().signum() < 0) {
+
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
                     "Product Service returned invalid product details");
@@ -95,6 +99,7 @@ public class OrderServiceImpl implements OrderService {
         BigDecimal totalPrice = product.getPrice()
                 .multiply(BigDecimal.valueOf(request.getQuantity()));
 
+        // Create the order. Its initial status is PENDING.
         Order order = new Order();
         order.setUserId(request.getUserId());
         order.setProductId(request.getProductId());
@@ -105,8 +110,18 @@ public class OrderServiceImpl implements OrderService {
         final Order savedOrder;
 
         try {
+            /*
+             * OrderPersistenceService saves the new order and its
+             * ORDER_CREATED outbox event in the same transaction.
+             */
             savedOrder = orderPersistenceService.saveOrder(order);
+
         } catch (DataIntegrityViolationException exception) {
+
+            /*
+             * Another concurrent request may have inserted the same
+             * idempotency key. Return that order if it matches.
+             */
             Order concurrentOrder = orderRepository
                     .findByIdempotencyKey(key)
                     .orElseThrow(() -> exception);
@@ -115,53 +130,19 @@ public class OrderServiceImpl implements OrderService {
             return toResponse(concurrentOrder);
         }
 
-        String reduceKey = "order-" + savedOrder.getId() + "-reduce";
+        /*
+         * Do not call inventoryClient.reduceStock() here.
+         * Inventory Service consumes ORDER_CREATED from Kafka and
+         * performs the stock reservation asynchronously.
+         *
+         * The order remains PENDING until an inventory result event
+         * updates its status.
+         */
+        log.info(
+                "Order created and awaiting inventory reservation. orderId={}",
+                savedOrder.getId());
 
-        try {
-            // Inventory Service owns stock reduction.
-            inventoryClient.reduceStock(
-                    request.getProductId(),
-                    reduceKey,
-                    new StockUpdateRequest(request.getQuantity()));
-
-            savedOrder.setStatus(OrderStatus.CONFIRMED);
-
-            Order confirmedOrder =
-                    orderPersistenceService.saveOrder(savedOrder);
-
-            return toResponse(confirmedOrder);
-
-        } catch (FeignException exception) {
-            log.error("reduceStock failed for order {}: status={}, body={}",
-                    savedOrder.getId(),
-                    exception.status(),
-                    safeBody(exception),
-                    exception);
-
-            // Inventory's atomic update is the authority on availability.
-            if (exception.status() == 409) {
-                throw new ResponseStatusException(
-                        HttpStatus.CONFLICT,
-                        "Insufficient stock or conflicting inventory operation",
-                        exception);
-            }
-
-            throw new ResponseStatusException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "Inventory operation outcome is uncertain. "
-                            + "Order requires reconciliation.",
-                    exception);
-
-        } catch (RuntimeException exception) {
-            log.error("reduceStock failed for order {}",
-                    savedOrder.getId(), exception);
-
-            throw new ResponseStatusException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "Inventory operation outcome is uncertain. "
-                            + "Order requires reconciliation.",
-                    exception);
-        }
+        return toResponse(savedOrder);
     }
 
     @Override
@@ -178,11 +159,12 @@ public class OrderServiceImpl implements OrderService {
                         HttpStatus.NOT_FOUND,
                         "Order not found: " + orderId));
 
-        // A retry must never restore stock twice.
+        // A repeated cancellation must not restore stock twice.
         if (order.getStatus() == OrderStatus.CANCELLED) {
             return toResponse(order);
         }
 
+        // Preserve the existing cancellation rule.
         if (order.getStatus() != OrderStatus.CONFIRMED) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
@@ -192,14 +174,21 @@ public class OrderServiceImpl implements OrderService {
         String restoreKey = "order-" + order.getId() + "-restore";
 
         try {
-            // Inventory Service owns stock restoration.
+            /*
+             * Inventory Service owns stock restoration.
+             * The operation key makes retries idempotent, provided
+             * Inventory Service enforces idempotency for this key.
+             */
             inventoryClient.restoreStock(
                     order.getProductId(),
                     restoreKey,
-                    new StockUpdateRequest(order.getQuantity()));
+                    new com.shopsphere.orderservice.dto.StockUpdateRequest(
+                            order.getQuantity()));
 
-        } catch (FeignException exception) {
-            log.error("restoreStock failed for order {}: status={}, body={}",
+        } catch (feign.FeignException exception) {
+
+            log.error(
+                    "restoreStock failed for order {}: status={}, body={}",
                     order.getId(),
                     exception.status(),
                     safeBody(exception),
@@ -219,8 +208,11 @@ public class OrderServiceImpl implements OrderService {
                     exception);
 
         } catch (RuntimeException exception) {
-            log.error("restoreStock failed for order {}",
-                    order.getId(), exception);
+
+            log.error(
+                    "restoreStock failed for order {}",
+                    order.getId(),
+                    exception);
 
             throw new ResponseStatusException(
                     HttpStatus.SERVICE_UNAVAILABLE,
@@ -238,22 +230,17 @@ public class OrderServiceImpl implements OrderService {
             return toResponse(cancelledOrder);
 
         } catch (RuntimeException exception) {
-            log.error("Stock restored but saving CANCELLED status failed "
-                    + "for order {}", order.getId(), exception);
+
+            log.error(
+                    "Stock restored but saving CANCELLED status failed for order {}",
+                    order.getId(),
+                    exception);
 
             throw new ResponseStatusException(
                     HttpStatus.SERVICE_UNAVAILABLE,
                     "Stock may have been restored, but cancellation "
                             + "could not be saved. Retry the cancellation.",
                     exception);
-        }
-    }
-
-    private String safeBody(FeignException exception) {
-        try {
-            return exception.contentUTF8();
-        } catch (RuntimeException ignored) {
-            return "<unavailable>";
         }
     }
 
@@ -270,6 +257,14 @@ public class OrderServiceImpl implements OrderService {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     "Idempotency-Key was already used with a different request");
+        }
+    }
+
+    private String safeBody(feign.FeignException exception) {
+        try {
+            return exception.contentUTF8();
+        } catch (RuntimeException ignored) {
+            return "<unavailable>";
         }
     }
 

@@ -1,4 +1,3 @@
-
 package com.shopsphere.orderservice.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -35,13 +34,10 @@ import com.shopsphere.orderservice.entity.Order;
 import com.shopsphere.orderservice.entity.OrderStatus;
 import com.shopsphere.orderservice.repository.OrderRepository;
 
-import feign.FeignException;
-
 @ExtendWith(MockitoExtension.class)
 class OrderServiceImplTest {
 
     private static final String IDEMPOTENCY_KEY = "shop-order-001";
-    private static final String REDUCE_KEY = "order-100-reduce";
     private static final String RESTORE_KEY = "order-100-restore";
 
     @Mock
@@ -77,20 +73,22 @@ class OrderServiceImplTest {
     }
 
     @Test
-    void placeOrder_ShouldSaveReduceInventoryAndConfirm() {
+    void placeOrder_ShouldCreatePendingOrderAndSaveOnce() {
         when(orderRepository.findByIdempotencyKey(IDEMPOTENCY_KEY))
                 .thenReturn(Optional.empty());
-        when(productClient.getProductById(3L)).thenReturn(product);
+
+        when(productClient.getProductById(3L))
+                .thenReturn(product);
 
         when(orderPersistenceService.saveOrder(any(Order.class)))
                 .thenAnswer(invocation -> {
                     Order order = invocation.getArgument(0);
-                    if (order.getId() == null) {
-                        order.setId(100L);
-                    }
+                    order.setId(100L);
+
                     if (order.getStatus() == null) {
                         order.setStatus(OrderStatus.PENDING);
                     }
+
                     return order;
                 });
 
@@ -99,15 +97,16 @@ class OrderServiceImplTest {
 
         assertNotNull(response);
         assertEquals(100L, response.getId());
-        assertEquals(OrderStatus.CONFIRMED, response.getStatus());
-        assertEquals(new BigDecimal("179998.00"), response.getTotalPrice());
+        assertEquals(OrderStatus.PENDING, response.getStatus());
+        assertEquals(
+                new BigDecimal("179998.00"),
+                response.getTotalPrice());
 
-        verify(inventoryClient).reduceStock(
-                eq(3L), eq(REDUCE_KEY), any(StockUpdateRequest.class));
-        verify(orderPersistenceService, times(2))
+        verify(orderPersistenceService, times(1))
                 .saveOrder(any(Order.class));
-        verify(productClient, never()).reduceStock(
-                any(), any(), any());
+
+        verify(inventoryClient, never())
+                .reduceStock(any(), any(), any());
     }
 
     @Test
@@ -117,7 +116,10 @@ class OrderServiceImplTest {
                 () -> orderService.placeOrder(request, " "));
 
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
-        verify(inventoryClient, never()).reduceStock(any(), any(), any());
+
+        verify(productClient, never()).getProductById(any());
+        verify(inventoryClient, never())
+                .reduceStock(any(), any(), any());
     }
 
     @Test
@@ -147,45 +149,16 @@ class OrderServiceImplTest {
                 () -> orderService.placeOrder(request, IDEMPOTENCY_KEY));
 
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
+
         verify(productClient, never()).getProductById(any());
-        verify(inventoryClient, never()).reduceStock(any(), any(), any());
-    }
-
-    @Test
-    void placeOrder_ShouldReturn409WhenInventoryReportsInsufficientStock() {
-        when(orderRepository.findByIdempotencyKey(IDEMPOTENCY_KEY))
-                .thenReturn(Optional.empty());
-        when(productClient.getProductById(3L)).thenReturn(product);
-
-        when(orderPersistenceService.saveOrder(any(Order.class)))
-                .thenAnswer(invocation -> {
-                    Order order = invocation.getArgument(0);
-                    order.setId(100L);
-                    if (order.getStatus() == null) {
-                        order.setStatus(OrderStatus.PENDING);
-                    }
-                    return order;
-                });
-
-        FeignException conflict = org.mockito.Mockito.mock(FeignException.class);
-        when(conflict.status()).thenReturn(409);
-
-        org.mockito.Mockito.doThrow(conflict)
-                .when(inventoryClient)
-                .reduceStock(eq(3L), eq(REDUCE_KEY), any(StockUpdateRequest.class));
-
-        ResponseStatusException ex = assertThrows(
-                ResponseStatusException.class,
-                () -> orderService.placeOrder(request, IDEMPOTENCY_KEY));
-
-        assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
-        verify(inventoryClient).reduceStock(
-                eq(3L), eq(REDUCE_KEY), any(StockUpdateRequest.class));
+        verify(inventoryClient, never())
+                .reduceStock(any(), any(), any());
     }
 
     @Test
     void placeOrder_ShouldReplayExistingOrderForSameRequest() {
         Order existing = createOrder(100L, OrderStatus.CONFIRMED);
+
         when(orderRepository.findByIdempotencyKey(IDEMPOTENCY_KEY))
                 .thenReturn(Optional.of(existing));
 
@@ -194,15 +167,19 @@ class OrderServiceImplTest {
 
         assertEquals(100L, response.getId());
         assertEquals(OrderStatus.CONFIRMED, response.getStatus());
+
         verify(productClient, never()).getProductById(any());
-        verify(inventoryClient, never()).reduceStock(any(), any(), any());
-        verify(orderPersistenceService, never()).saveOrder(any());
+        verify(inventoryClient, never())
+                .reduceStock(any(), any(), any());
+        verify(orderPersistenceService, never())
+                .saveOrder(any(Order.class));
     }
 
     @Test
     void placeOrder_ShouldRejectDifferentRequestForExistingKey() {
         Order existing = createOrder(100L, OrderStatus.CONFIRMED);
         existing.setQuantity(1);
+
         when(orderRepository.findByIdempotencyKey(IDEMPOTENCY_KEY))
                 .thenReturn(Optional.of(existing));
 
@@ -211,17 +188,23 @@ class OrderServiceImplTest {
                 () -> orderService.placeOrder(request, IDEMPOTENCY_KEY));
 
         assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
-        verify(inventoryClient, never()).reduceStock(any(), any(), any());
+
+        verify(inventoryClient, never())
+                .reduceStock(any(), any(), any());
     }
 
     @Test
     void placeOrder_ShouldReplayConcurrentInsertForSameRequest() {
-        Order concurrentOrder = createOrder(100L, OrderStatus.CONFIRMED);
+        Order concurrentOrder =
+                createOrder(100L, OrderStatus.CONFIRMED);
 
         when(orderRepository.findByIdempotencyKey(IDEMPOTENCY_KEY))
                 .thenReturn(Optional.empty())
                 .thenReturn(Optional.of(concurrentOrder));
-        when(productClient.getProductById(3L)).thenReturn(product);
+
+        when(productClient.getProductById(3L))
+                .thenReturn(product);
+
         when(orderPersistenceService.saveOrder(any(Order.class)))
                 .thenThrow(new DataIntegrityViolationException(
                         "Duplicate idempotency key"));
@@ -231,40 +214,18 @@ class OrderServiceImplTest {
 
         assertEquals(100L, response.getId());
         assertEquals(OrderStatus.CONFIRMED, response.getStatus());
-        verify(inventoryClient, never()).reduceStock(any(), any(), any());
-    }
 
-    @Test
-    void placeOrder_ShouldReturn503WhenInventoryReductionFails() {
-        when(orderRepository.findByIdempotencyKey(IDEMPOTENCY_KEY))
-                .thenReturn(Optional.empty());
-        when(productClient.getProductById(3L)).thenReturn(product);
-
-        when(orderPersistenceService.saveOrder(any(Order.class)))
-                .thenAnswer(invocation -> {
-                    Order order = invocation.getArgument(0);
-                    order.setId(100L);
-                    if (order.getStatus() == null) {
-                        order.setStatus(OrderStatus.PENDING);
-                    }
-                    return order;
-                });
-
-        org.mockito.Mockito.doThrow(new RuntimeException("Inventory unavailable"))
-                .when(inventoryClient)
-                .reduceStock(eq(3L), eq(REDUCE_KEY), any(StockUpdateRequest.class));
-
-        ResponseStatusException ex = assertThrows(
-                ResponseStatusException.class,
-                () -> orderService.placeOrder(request, IDEMPOTENCY_KEY));
-
-        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.getStatusCode());
+        verify(inventoryClient, never())
+                .reduceStock(any(), any(), any());
     }
 
     @Test
     void cancelOrder_ShouldRestoreInventoryAndSaveCancelledStatus() {
         Order order = createOrder(100L, OrderStatus.CONFIRMED);
-        when(orderRepository.findById(100L)).thenReturn(Optional.of(order));
+
+        when(orderRepository.findById(100L))
+                .thenReturn(Optional.of(order));
+
         when(orderPersistenceService.saveOrder(any(Order.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -273,33 +234,47 @@ class OrderServiceImplTest {
         assertEquals(OrderStatus.CANCELLED, response.getStatus());
 
         verify(inventoryClient).restoreStock(
-                eq(3L), eq(RESTORE_KEY), any(StockUpdateRequest.class));
-        verify(productClient, never()).restoreStock(any(), any(), any());
+                eq(3L),
+                eq(RESTORE_KEY),
+                any(StockUpdateRequest.class));
+
+        verify(productClient, never())
+        .restoreStock(any(), any(), any());
+
         verify(orderPersistenceService).saveOrder(order);
     }
 
     @Test
     void cancelOrder_ShouldNotRestoreInventoryTwiceWhenAlreadyCancelled() {
         Order order = createOrder(100L, OrderStatus.CANCELLED);
-        when(orderRepository.findById(100L)).thenReturn(Optional.of(order));
+
+        when(orderRepository.findById(100L))
+                .thenReturn(Optional.of(order));
 
         OrderResponse response = orderService.cancelOrder(100L);
 
         assertEquals(OrderStatus.CANCELLED, response.getStatus());
-        verify(inventoryClient, never()).restoreStock(any(), any(), any());
-        verify(orderPersistenceService, never()).saveOrder(any());
+
+        verify(inventoryClient, never())
+                .restoreStock(any(), any(), any());
+
+        verify(orderPersistenceService, never())
+                .saveOrder(any(Order.class));
     }
 
     @Test
     void cancelOrder_ShouldReturn404WhenOrderDoesNotExist() {
-        when(orderRepository.findById(999L)).thenReturn(Optional.empty());
+        when(orderRepository.findById(999L))
+                .thenReturn(Optional.empty());
 
         ResponseStatusException ex = assertThrows(
                 ResponseStatusException.class,
                 () -> orderService.cancelOrder(999L));
 
         assertEquals(HttpStatus.NOT_FOUND, ex.getStatusCode());
-        verify(inventoryClient, never()).restoreStock(any(), any(), any());
+
+        verify(inventoryClient, never())
+                .restoreStock(any(), any(), any());
     }
 
     @Test
@@ -314,31 +289,42 @@ class OrderServiceImplTest {
     @Test
     void cancelOrder_ShouldRejectNonConfirmedOrder() {
         Order order = createOrder(100L, OrderStatus.PENDING);
-        when(orderRepository.findById(100L)).thenReturn(Optional.of(order));
+
+        when(orderRepository.findById(100L))
+                .thenReturn(Optional.of(order));
 
         ResponseStatusException ex = assertThrows(
                 ResponseStatusException.class,
                 () -> orderService.cancelOrder(100L));
 
         assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
-        verify(inventoryClient, never()).restoreStock(any(), any(), any());
+
+        verify(inventoryClient, never())
+                .restoreStock(any(), any(), any());
     }
 
     @Test
     void cancelOrder_ShouldReturn503WhenInventoryRestoreFails() {
         Order order = createOrder(100L, OrderStatus.CONFIRMED);
-        when(orderRepository.findById(100L)).thenReturn(Optional.of(order));
+
+        when(orderRepository.findById(100L))
+                .thenReturn(Optional.of(order));
 
         doThrow(new RuntimeException("Inventory unavailable"))
                 .when(inventoryClient)
                 .restoreStock(
-                        eq(3L), eq(RESTORE_KEY), any(StockUpdateRequest.class));
+                        eq(3L),
+                        eq(RESTORE_KEY),
+                        any(StockUpdateRequest.class));
 
         ResponseStatusException ex = assertThrows(
                 ResponseStatusException.class,
                 () -> orderService.cancelOrder(100L));
 
-        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.getStatusCode());
+        assertEquals(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                ex.getStatusCode());
+
         assertEquals(OrderStatus.CONFIRMED, order.getStatus());
     }
 
@@ -351,6 +337,7 @@ class OrderServiceImplTest {
         order.setTotalPrice(new BigDecimal("179998.00"));
         order.setStatus(status);
         order.setIdempotencyKey(IDEMPOTENCY_KEY);
+
         return order;
     }
 }
