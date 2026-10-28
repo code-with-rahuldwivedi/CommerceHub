@@ -8,9 +8,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import java.util.UUID;
 import org.springframework.web.server.ResponseStatusException;
 
-import com.shopsphere.orderservice.client.InventoryClient;
 import com.shopsphere.orderservice.client.ProductClient;
 import com.shopsphere.orderservice.dto.OrderRequest;
 import com.shopsphere.orderservice.dto.OrderResponse;
@@ -27,18 +27,15 @@ public class OrderServiceImpl implements OrderService {
 
     private final OrderRepository orderRepository;
     private final ProductClient productClient;
-    private final InventoryClient inventoryClient;
     private final OrderPersistenceService orderPersistenceService;
 
     public OrderServiceImpl(
             OrderRepository orderRepository,
             ProductClient productClient,
-            InventoryClient inventoryClient,
             OrderPersistenceService orderPersistenceService) {
 
         this.orderRepository = orderRepository;
         this.productClient = productClient;
-        this.inventoryClient = inventoryClient;
         this.orderPersistenceService = orderPersistenceService;
     }
 
@@ -147,100 +144,56 @@ public class OrderServiceImpl implements OrderService {
 
     @Override
     public OrderResponse cancelOrder(Long orderId) {
+        // Internal compatibility method; HTTP callers use the ownership overload.
+        return cancelOrder(orderId, null, true);
+    }
 
+    @Override
+    public OrderResponse cancelOrder(
+            Long orderId, Long requesterUserId, boolean admin) {
         if (orderId == null || orderId <= 0) {
             throw new ResponseStatusException(
-                    HttpStatus.BAD_REQUEST,
-                    "A valid order ID is required");
+                    HttpStatus.BAD_REQUEST, "A valid order ID is required");
         }
 
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResponseStatusException(
-                        HttpStatus.NOT_FOUND,
-                        "Order not found: " + orderId));
+                        HttpStatus.NOT_FOUND, "Order not found: " + orderId));
 
-        // A repeated cancellation must not restore stock twice.
-        if (order.getStatus() == OrderStatus.CANCELLED) {
+        if (!admin && (requesterUserId == null
+                || !Objects.equals(order.getUserId(), requesterUserId))) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN, "You are not allowed to access this order");
+        }
+
+        if (order.getStatus() == OrderStatus.CANCELLED
+                || order.getStatus() == OrderStatus.CANCEL_REQUESTED) {
             return toResponse(order);
         }
 
-        // Preserve the existing cancellation rule.
-        if (order.getStatus() != OrderStatus.CONFIRMED) {
+        if (order.getStatus() != OrderStatus.CONFIRMED
+                && order.getStatus() != OrderStatus.CANCEL_FAILED) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
-                    "Only confirmed orders can be cancelled");
+                    "Only confirmed orders or orders with a failed cancellation can be cancelled");
         }
 
-        String restoreKey = "order-" + order.getId() + "-restore";
+        // A new command ID distinguishes a retry attempt from an older result event.
+        String commandId = UUID.randomUUID().toString();
+        order.setCancellationCommandId(commandId);
+        order.setStatus(OrderStatus.CANCEL_REQUESTED);
 
         try {
-            /*
-             * Inventory Service owns stock restoration.
-             * The operation key makes retries idempotent, provided
-             * Inventory Service enforces idempotency for this key.
-             */
-            inventoryClient.restoreStock(
-                    order.getProductId(),
-                    restoreKey,
-                    new com.shopsphere.orderservice.dto.StockUpdateRequest(
-                            order.getQuantity()));
-
-        } catch (feign.FeignException exception) {
-
-            log.error(
-                    "restoreStock failed for order {}: status={}, body={}",
-                    order.getId(),
-                    exception.status(),
-                    safeBody(exception),
-                    exception);
-
-            if (exception.status() == 409) {
-                throw new ResponseStatusException(
-                        HttpStatus.CONFLICT,
-                        "Conflicting inventory operation",
-                        exception);
-            }
-
-            throw new ResponseStatusException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "Stock restoration outcome is uncertain. "
-                            + "Retry cancellation using the same order ID.",
-                    exception);
-
+            Order updated = orderPersistenceService.saveOrderWithEvent(
+                    order, "ORDER_CANCEL_REQUESTED", commandId);
+            log.info("Cancellation requested asynchronously. orderId={}, commandId={}",
+                    updated.getId(), commandId);
+            return toResponse(updated);
         } catch (RuntimeException exception) {
-
-            log.error(
-                    "restoreStock failed for order {}",
-                    order.getId(),
-                    exception);
-
+            log.error("Could not persist cancellation request for order {}", orderId, exception);
             throw new ResponseStatusException(
                     HttpStatus.SERVICE_UNAVAILABLE,
-                    "Stock restoration outcome is uncertain. "
-                            + "Retry cancellation using the same order ID.",
-                    exception);
-        }
-
-        order.setStatus(OrderStatus.CANCELLED);
-
-        try {
-            Order cancelledOrder =
-                    orderPersistenceService.saveOrder(order);
-
-            return toResponse(cancelledOrder);
-
-        } catch (RuntimeException exception) {
-
-            log.error(
-                    "Stock restored but saving CANCELLED status failed for order {}",
-                    order.getId(),
-                    exception);
-
-            throw new ResponseStatusException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "Stock may have been restored, but cancellation "
-                            + "could not be saved. Retry the cancellation.",
-                    exception);
+                    "Cancellation request could not be persisted; retry safely", exception);
         }
     }
 
@@ -257,14 +210,6 @@ public class OrderServiceImpl implements OrderService {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     "Idempotency-Key was already used with a different request");
-        }
-    }
-
-    private String safeBody(feign.FeignException exception) {
-        try {
-            return exception.contentUTF8();
-        } catch (RuntimeException ignored) {
-            return "<unavailable>";
         }
     }
 

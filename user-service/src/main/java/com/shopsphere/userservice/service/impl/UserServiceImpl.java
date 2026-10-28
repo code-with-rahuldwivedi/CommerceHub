@@ -9,7 +9,6 @@ import com.shopsphere.userservice.dto.RegisterRequest;
 import com.shopsphere.userservice.entity.Role;
 import com.shopsphere.userservice.entity.User;
 import com.shopsphere.userservice.exception.EmailAlreadyExistsException;
-import com.shopsphere.userservice.exception.InvalidCredentialsException;
 import com.shopsphere.userservice.repository.UserRepository;
 import com.shopsphere.userservice.security.JwtService;
 import com.shopsphere.userservice.service.UserService;
@@ -41,9 +40,9 @@ public class UserServiceImpl implements UserService {
         user.setEmail(email);
         user.setPassword(passwordEncoder.encode(request.getPassword()));
 
-        // ✅ FIX: role handling
-        Role role = (request.getRole() != null) ? request.getRole() : Role.USER;
-        user.setRole(role);
+        // Public registration must never grant elevated privileges.
+        // ADMIN accounts are provisioned through a trusted administrative process.
+        user.setRole(Role.USER);
 
         userRepository.save(user);
 

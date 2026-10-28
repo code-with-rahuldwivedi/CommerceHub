@@ -1,11 +1,13 @@
 package com.shopsphere.orderservice.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 
 public class OrderRequest {
 
-    @NotNull(message = "User ID is required")
+    // Derived from the verified JWT by OrderController; never accept it from JSON.
+    @JsonProperty(access = JsonProperty.Access.READ_ONLY)
     private Long userId;
 
     @NotNull(message = "Product ID is required")

@@ -2,11 +2,29 @@ spring:
   application:
     name: service-registry
 
-
 server:
-  port: 8761
+  port: ${SERVER_PORT:8761}
 
 eureka:
   client:
     register-with-eureka: false
     fetch-registry: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:0.1}
+    enabled: false
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}

@@ -17,8 +17,7 @@ public class JwtService {
     private String secret;
 
     private Key getSignKey() {
-        byte[] keyBytes = Decoders.BASE64.decode(secret);
-        return Keys.hmacShaKeyFor(keyBytes);
+        return Keys.hmacShaKeyFor(Decoders.BASE64.decode(secret));
     }
 
     public Claims extractAllClaims(String token) {
@@ -39,9 +38,16 @@ public class JwtService {
 
     public boolean validateToken(String token) {
         try {
-            extractAllClaims(token);
-            return true;
-        } catch (Exception e) {
+            Claims claims = extractAllClaims(token);
+            String role = claims.get("role", String.class);
+            Object userId = claims.get("userId");
+            long id = userId instanceof Number number
+                    ? number.longValue()
+                    : userId instanceof String value ? Long.parseLong(value) : -1L;
+            return claims.getSubject() != null && !claims.getSubject().isBlank()
+                    && id > 0
+                    && ("USER".equals(role) || "ADMIN".equals(role));
+        } catch (Exception ignored) {
             return false;
         }
     }

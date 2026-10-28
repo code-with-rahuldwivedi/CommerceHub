@@ -39,9 +39,16 @@ public class JwtService {
 
     public boolean isTokenValid(String token) {
         try {
-            extractAllClaims(token);
-            return true;
-        } catch (Exception e) {
+            Claims claims = extractAllClaims(token);
+            String role = claims.get("role", String.class);
+            Object rawUserId = claims.get("userId");
+            long userId = rawUserId instanceof Number number
+                    ? number.longValue()
+                    : rawUserId instanceof String value ? Long.parseLong(value) : -1L;
+            return claims.getSubject() != null && !claims.getSubject().isBlank()
+                    && userId > 0
+                    && ("USER".equals(role) || "ADMIN".equals(role));
+        } catch (Exception ignored) {
             return false;
         }
     }

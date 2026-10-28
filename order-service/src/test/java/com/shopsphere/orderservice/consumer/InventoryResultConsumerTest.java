@@ -43,7 +43,7 @@ class InventoryResultConsumerTest {
         consumer.consumeInventoryResult(validMessage("INVENTORY_RESERVED", 3L, 2));
 
         assertEquals(OrderStatus.CONFIRMED, order.getStatus());
-        verify(orderRepository).save(order);
+        verify(orderRepository).saveAndFlush(order);
     }
 
     @Test
@@ -54,7 +54,7 @@ class InventoryResultConsumerTest {
         consumer.consumeInventoryResult(validMessage("INVENTORY_RESERVATION_FAILED", 3L, 2));
 
         assertEquals(OrderStatus.FAILED, order.getStatus());
-        verify(orderRepository).save(order);
+        verify(orderRepository).saveAndFlush(order);
     }
 
     @Test
@@ -65,7 +65,7 @@ class InventoryResultConsumerTest {
         consumer.consumeInventoryResult(validMessage("INVENTORY_RESERVED", 3L, 2));
 
         assertEquals(OrderStatus.CONFIRMED, order.getStatus());
-        verify(orderRepository, never()).save(any(Order.class));
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
     }
 
     @Test
@@ -77,7 +77,7 @@ class InventoryResultConsumerTest {
                 () -> consumer.consumeInventoryResult(
                         validMessage("INVENTORY_RESERVED", 3L, 2)));
 
-        verify(orderRepository, never()).save(any(Order.class));
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
     }
 
     @Test
@@ -91,7 +91,7 @@ class InventoryResultConsumerTest {
                         validMessage("INVENTORY_RESERVED", 99L, 2)));
 
         assertEquals(OrderStatus.PENDING, order.getStatus());
-        verify(orderRepository, never()).save(any(Order.class));
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
     }
 
     @Test
@@ -105,7 +105,7 @@ class InventoryResultConsumerTest {
                         validMessage("INVENTORY_RESERVED", 3L, 5)));
 
         assertEquals(OrderStatus.PENDING, order.getStatus());
-        verify(orderRepository, never()).save(any(Order.class));
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
     }
 
     @Test
@@ -123,12 +123,51 @@ class InventoryResultConsumerTest {
                 () -> consumer.consumeInventoryResult("{not-json"));
     }
 
+
+    @Test
+    void consumeInventoryResult_ShouldCompleteMatchingCancellationCommand() throws Exception {
+        Order order = createOrder(OrderStatus.CANCEL_REQUESTED);
+        order.setCancellationCommandId("cancel-command-1");
+        when(orderRepository.findById(100L)).thenReturn(Optional.of(order));
+
+        consumer.consumeInventoryResult(validCancellationMessage(
+                "ORDER_CANCELLED", "cancel-command-1", 3L, 2));
+
+        assertEquals(OrderStatus.CANCELLED, order.getStatus());
+        verify(orderRepository).saveAndFlush(order);
+    }
+
+    @Test
+    void consumeInventoryResult_ShouldIgnoreStaleCancellationCommand() throws Exception {
+        Order order = createOrder(OrderStatus.CANCEL_REQUESTED);
+        order.setCancellationCommandId("new-command");
+        when(orderRepository.findById(100L)).thenReturn(Optional.of(order));
+
+        consumer.consumeInventoryResult(validCancellationMessage(
+                "ORDER_CANCELLED", "old-command", 3L, 2));
+
+        assertEquals(OrderStatus.CANCEL_REQUESTED, order.getStatus());
+        verify(orderRepository, never()).saveAndFlush(any(Order.class));
+    }
+
     private String validMessage(String status, Long productId, int quantity) {
         return "{"
                 + "\"orderId\":100,"
                 + "\"productId\":" + productId + ","
                 + "\"quantity\":" + quantity + ","
                 + "\"status\":\"" + status + "\","
+                + "\"message\":\"test\""
+                + "}";
+    }
+
+    private String validCancellationMessage(
+            String status, String commandId, Long productId, int quantity) {
+        return "{"
+                + "\"orderId\":100,"
+                + "\"productId\":" + productId + ","
+                + "\"quantity\":" + quantity + ","
+                + "\"status\":\"" + status + "\","
+                + "\"commandId\":\"" + commandId + "\","
                 + "\"message\":\"test\""
                 + "}";
     }

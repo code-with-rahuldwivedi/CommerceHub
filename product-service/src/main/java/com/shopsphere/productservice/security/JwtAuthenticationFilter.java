@@ -1,4 +1,3 @@
-
 package com.shopsphere.productservice.security;
 
 import java.io.IOException;
@@ -68,9 +67,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             }
 
             role = role.trim();
-
             if (role.startsWith("ROLE_")) {
                 role = role.substring(5);
+            }
+            if (!"USER".equals(role) && !"ADMIN".equals(role)) {
+                SecurityContextHolder.clearContext();
+                response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid JWT role");
+                return;
             }
 
             UsernamePasswordAuthenticationToken authentication =
@@ -89,13 +92,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
             SecurityContextHolder.getContext()
                     .setAuthentication(authentication);
-
-            // Temporary debugging; do not print the JWT itself.
-            System.out.println("JWT Username: " + username);
-            System.out.println("JWT Role: " + role);
-            System.out.println(
-                    "Authorities: " + authentication.getAuthorities()
-            );
 
         } catch (io.jsonwebtoken.JwtException
                  | IllegalArgumentException ex) {

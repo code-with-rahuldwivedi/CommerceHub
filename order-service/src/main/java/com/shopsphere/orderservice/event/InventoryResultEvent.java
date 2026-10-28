@@ -5,6 +5,12 @@ public record InventoryResultEvent(
         Long productId,
         Integer quantity,
         String status,
-        String message
+        String message,
+        String commandId
 ) {
+    public InventoryResultEvent(
+            Long orderId, Long productId, Integer quantity,
+            String status, String message) {
+        this(orderId, productId, quantity, status, message, null);
+    }
 }

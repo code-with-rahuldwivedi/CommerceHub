@@ -4,8 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -24,12 +22,10 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
-import com.shopsphere.orderservice.client.InventoryClient;
 import com.shopsphere.orderservice.client.ProductClient;
 import com.shopsphere.orderservice.dto.OrderRequest;
 import com.shopsphere.orderservice.dto.OrderResponse;
 import com.shopsphere.orderservice.dto.ProductResponse;
-import com.shopsphere.orderservice.dto.StockUpdateRequest;
 import com.shopsphere.orderservice.entity.Order;
 import com.shopsphere.orderservice.entity.OrderStatus;
 import com.shopsphere.orderservice.repository.OrderRepository;
@@ -38,16 +34,12 @@ import com.shopsphere.orderservice.repository.OrderRepository;
 class OrderServiceImplTest {
 
     private static final String IDEMPOTENCY_KEY = "shop-order-001";
-    private static final String RESTORE_KEY = "order-100-restore";
 
     @Mock
     private OrderRepository orderRepository;
 
     @Mock
     private ProductClient productClient;
-
-    @Mock
-    private InventoryClient inventoryClient;
 
     @Mock
     private OrderPersistenceService orderPersistenceService;
@@ -204,109 +196,98 @@ class OrderServiceImplTest {
     }
 
     @Test
-    void cancelOrder_ShouldRestoreInventoryAndSaveCancelledStatus() {
+    void cancelOrder_ShouldPublishAsyncCancellationCommand() {
         Order order = createOrder(100L, OrderStatus.CONFIRMED);
-
-        when(orderRepository.findById(100L))
-                .thenReturn(Optional.of(order));
-
-        when(orderPersistenceService.saveOrder(any(Order.class)))
+        when(orderRepository.findById(100L)).thenReturn(Optional.of(order));
+        when(orderPersistenceService.saveOrderWithEvent(
+                any(Order.class), org.mockito.ArgumentMatchers.eq("ORDER_CANCEL_REQUESTED"),
+                any(String.class)))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         OrderResponse response = orderService.cancelOrder(100L);
 
-        assertEquals(OrderStatus.CANCELLED, response.getStatus());
-
-        verify(inventoryClient).restoreStock(
-                eq(3L),
-                eq(RESTORE_KEY),
-                any(StockUpdateRequest.class));
-
-        verify(orderPersistenceService).saveOrder(order);
+        assertEquals(OrderStatus.CANCEL_REQUESTED, response.getStatus());
+        assertNotNull(order.getCancellationCommandId());
+        verify(orderPersistenceService).saveOrderWithEvent(
+                order, "ORDER_CANCEL_REQUESTED", order.getCancellationCommandId());
     }
 
     @Test
-    void cancelOrder_ShouldNotRestoreInventoryTwiceWhenAlreadyCancelled() {
-        Order order = createOrder(100L, OrderStatus.CANCELLED);
+    void cancelOrder_ShouldRejectAnotherUsersOrder() {
+        Order order = createOrder(100L, OrderStatus.CONFIRMED);
+        when(orderRepository.findById(100L)).thenReturn(Optional.of(order));
 
-        when(orderRepository.findById(100L))
-                .thenReturn(Optional.of(order));
+        ResponseStatusException ex = assertThrows(
+                ResponseStatusException.class,
+                () -> orderService.cancelOrder(100L, 999L, false));
+
+        assertEquals(HttpStatus.FORBIDDEN, ex.getStatusCode());
+        verify(orderPersistenceService, never())
+                .saveOrderWithEvent(any(Order.class), any(String.class), any(String.class));
+    }
+
+    @Test
+    void cancelOrder_ShouldReturnPendingForDuplicateRequest() {
+        Order order = createOrder(100L, OrderStatus.CANCEL_REQUESTED);
+        order.setCancellationCommandId("existing-command");
+        when(orderRepository.findById(100L)).thenReturn(Optional.of(order));
+
+        OrderResponse response = orderService.cancelOrder(100L);
+
+        assertEquals(OrderStatus.CANCEL_REQUESTED, response.getStatus());
+        verify(orderPersistenceService, never())
+                .saveOrderWithEvent(any(Order.class), any(String.class), any(String.class));
+    }
+
+    @Test
+    void cancelOrder_ShouldReturnExistingCancelledOrder() {
+        Order order = createOrder(100L, OrderStatus.CANCELLED);
+        when(orderRepository.findById(100L)).thenReturn(Optional.of(order));
 
         OrderResponse response = orderService.cancelOrder(100L);
 
         assertEquals(OrderStatus.CANCELLED, response.getStatus());
-
-        verify(inventoryClient, never())
-                .restoreStock(any(), any(), any());
-
         verify(orderPersistenceService, never())
-                .saveOrder(any(Order.class));
+                .saveOrderWithEvent(any(Order.class), any(String.class), any(String.class));
     }
 
     @Test
     void cancelOrder_ShouldReturn404WhenOrderDoesNotExist() {
-        when(orderRepository.findById(999L))
-                .thenReturn(Optional.empty());
-
+        when(orderRepository.findById(999L)).thenReturn(Optional.empty());
         ResponseStatusException ex = assertThrows(
-                ResponseStatusException.class,
-                () -> orderService.cancelOrder(999L));
-
+                ResponseStatusException.class, () -> orderService.cancelOrder(999L));
         assertEquals(HttpStatus.NOT_FOUND, ex.getStatusCode());
-
-        verify(inventoryClient, never())
-                .restoreStock(any(), any(), any());
     }
 
     @Test
     void cancelOrder_ShouldRejectInvalidOrderId() {
         ResponseStatusException ex = assertThrows(
-                ResponseStatusException.class,
-                () -> orderService.cancelOrder(0L));
-
+                ResponseStatusException.class, () -> orderService.cancelOrder(0L));
         assertEquals(HttpStatus.BAD_REQUEST, ex.getStatusCode());
     }
 
     @Test
     void cancelOrder_ShouldRejectNonConfirmedOrder() {
         Order order = createOrder(100L, OrderStatus.PENDING);
-
-        when(orderRepository.findById(100L))
-                .thenReturn(Optional.of(order));
-
+        when(orderRepository.findById(100L)).thenReturn(Optional.of(order));
         ResponseStatusException ex = assertThrows(
-                ResponseStatusException.class,
-                () -> orderService.cancelOrder(100L));
-
+                ResponseStatusException.class, () -> orderService.cancelOrder(100L));
         assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
-
-        verify(inventoryClient, never())
-                .restoreStock(any(), any(), any());
     }
 
     @Test
-    void cancelOrder_ShouldReturn503WhenInventoryRestoreFails() {
-        Order order = createOrder(100L, OrderStatus.CONFIRMED);
+    void cancelOrder_ShouldAllowRetryAfterFailedCancellation() {
+        Order order = createOrder(100L, OrderStatus.CANCEL_FAILED);
+        when(orderRepository.findById(100L)).thenReturn(Optional.of(order));
+        when(orderPersistenceService.saveOrderWithEvent(
+                any(Order.class), org.mockito.ArgumentMatchers.eq("ORDER_CANCEL_REQUESTED"),
+                any(String.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
 
-        when(orderRepository.findById(100L))
-                .thenReturn(Optional.of(order));
+        OrderResponse response = orderService.cancelOrder(100L);
 
-        doThrow(new RuntimeException("Inventory unavailable"))
-                .when(inventoryClient)
-                .restoreStock(
-                        eq(3L),
-                        eq(RESTORE_KEY),
-                        any(StockUpdateRequest.class));
-
-        ResponseStatusException ex = assertThrows(
-                ResponseStatusException.class,
-                () -> orderService.cancelOrder(100L));
-
-        assertEquals(
-                HttpStatus.SERVICE_UNAVAILABLE,
-                ex.getStatusCode());
-
-        assertEquals(OrderStatus.CONFIRMED, order.getStatus());
+        assertEquals(OrderStatus.CANCEL_REQUESTED, response.getStatus());
+        assertNotNull(order.getCancellationCommandId());
     }
 
     private Order createOrder(Long id, OrderStatus status) {

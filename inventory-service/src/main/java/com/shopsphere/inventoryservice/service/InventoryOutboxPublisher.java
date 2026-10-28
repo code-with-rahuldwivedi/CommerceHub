@@ -82,6 +82,7 @@ public class InventoryOutboxPublisher {
         event.setStatus("PUBLISHED");
         event.setPublishedAt(LocalDateTime.now());
         event.setClaimedAt(null);
+        event.setNextAttemptAt(null);
         event.setLastError(null);
 
         outboxRepository.save(event);
@@ -94,8 +95,12 @@ public class InventoryOutboxPublisher {
                 .orElseThrow(() -> new IllegalStateException(
                         "Outbox event not found: " + eventId));
 
-        event.setAttempts(event.getAttempts() + 1);
+        int attempts = event.getAttempts() + 1;
+        event.setAttempts(attempts);
         event.setClaimedAt(null);
+        long backoffSeconds = Math.min(300L,
+                5L * (1L << Math.min(Math.max(attempts - 1, 0), 6)));
+        event.setNextAttemptAt(LocalDateTime.now().plusSeconds(backoffSeconds));
 
         String error = exception.getMessage();
 

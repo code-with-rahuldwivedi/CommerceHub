@@ -27,47 +27,57 @@ public class OrderPersistenceService {
         this.objectMapper = objectMapper;
     }
 
+    /** Saves an order and, for a new order, its creation event atomically. */
     @Transactional
     public Order saveOrder(Order order) {
-
         boolean isNewOrder = order.getId() == null;
-
         Order savedOrder = orderRepository.saveAndFlush(order);
-
-        // Only create ORDER_CREATED for a brand-new order.
-        // Updating CONFIRMED or CANCELLED must not create it again.
         if (isNewOrder) {
-            OrderCreatedEventPayload payload =
-                    new OrderCreatedEventPayload(
-                            savedOrder.getId(),
-                            savedOrder.getUserId(),
-                            savedOrder.getProductId(),
-                            savedOrder.getQuantity(),
-                            savedOrder.getTotalPrice(),
-                            savedOrder.getIdempotencyKey(),
-                            savedOrder.getOrderDate()
-                    );
-
-            OutboxEvent event = new OutboxEvent();
-            event.setAggregateType("ORDER");
-            event.setAggregateId(savedOrder.getId());
-            event.setEventType("ORDER_CREATED");
-
-            try {
-                event.setPayload(
-                        objectMapper.writeValueAsString(payload));
-            } catch (JsonProcessingException exception) {
-                throw new IllegalStateException(
-                        "Could not serialize ORDER_CREATED event",
-                        exception);
-            }
-
-            event.setStatus("PENDING");
-            event.setAttempts(0);
-
-            outboxEventRepository.save(event);
+            saveOutboxEvent(savedOrder, "ORDER_CREATED", null);
         }
-
         return savedOrder;
+    }
+
+    /** Saves an order state transition and its event in one DB transaction. */
+    @Transactional
+    public Order saveOrderWithEvent(
+            Order order, String eventType, String commandId) {
+        if (order.getId() == null) {
+            throw new IllegalArgumentException("An existing order is required for a transition event");
+        }
+        if (eventType == null || eventType.isBlank()) {
+            throw new IllegalArgumentException("eventType is required");
+        }
+        Order savedOrder = orderRepository.saveAndFlush(order);
+        saveOutboxEvent(savedOrder, eventType, commandId);
+        return savedOrder;
+    }
+
+    private void saveOutboxEvent(
+            Order order, String eventType, String commandId) {
+        OrderCreatedEventPayload payload = new OrderCreatedEventPayload(
+                order.getId(),
+                order.getUserId(),
+                order.getProductId(),
+                order.getQuantity(),
+                order.getTotalPrice(),
+                order.getIdempotencyKey(),
+                order.getOrderDate(),
+                eventType,
+                commandId);
+
+        OutboxEvent event = new OutboxEvent();
+        event.setAggregateType("ORDER");
+        event.setAggregateId(order.getId());
+        event.setEventType(eventType);
+        try {
+            event.setPayload(objectMapper.writeValueAsString(payload));
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException(
+                    "Could not serialize " + eventType + " event", exception);
+        }
+        event.setStatus("PENDING");
+        event.setAttempts(0);
+        outboxEventRepository.save(event);
     }
 }

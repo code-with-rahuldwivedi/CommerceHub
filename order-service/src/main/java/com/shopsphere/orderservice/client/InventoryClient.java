@@ -1,4 +1,3 @@
-
 package com.shopsphere.orderservice.client;
 
 import org.springframework.cloud.openfeign.FeignClient;

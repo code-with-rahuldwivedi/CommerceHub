@@ -89,7 +89,7 @@ class UserServiceImplTest {
     }
 
     @Test
-    void registerUser_ShouldKeepRequestedRole_WhenRoleIsProvided() {
+    void registerUser_ShouldForceUserRole_WhenAdminRoleIsRequested() {
         RegisterRequest adminRequest =
                 new RegisterRequest("Admin User", "admin@example.com", "adminPass1", Role.ADMIN);
 
@@ -98,7 +98,7 @@ class UserServiceImplTest {
 
         userService.registerUser(adminRequest);
 
-        verify(userRepository).save(argThat(user -> user.getRole() == Role.ADMIN));
+        verify(userRepository).save(argThat(user -> user.getRole() == Role.USER));
     }
 
     // ---------- login() tests ----------

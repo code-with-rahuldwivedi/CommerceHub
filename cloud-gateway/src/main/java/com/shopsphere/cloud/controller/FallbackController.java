@@ -23,4 +23,12 @@ public class FallbackController {
                 HttpStatus.SERVICE_UNAVAILABLE
         );
     }
+    
+    @GetMapping("/orderServiceFallBack")
+    public ResponseEntity<String> orderServiceFallBack() {
+        return new ResponseEntity<>(
+                "Order Service is temporarily unavailable. Please try again later.",
+                HttpStatus.SERVICE_UNAVAILABLE
+        );
+    }
 }

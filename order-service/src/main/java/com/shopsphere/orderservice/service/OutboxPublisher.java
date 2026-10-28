@@ -1,7 +1,7 @@
 package com.shopsphere.orderservice.service;
 
-import com.shopsphere.orderservice.entity.OutboxEvent;
-import com.shopsphere.orderservice.repository.OutboxEventRepository;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,60 +10,45 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.concurrent.TimeUnit;
-
 @Component
 public class OutboxPublisher {
+    private static final Logger log = LoggerFactory.getLogger(OutboxPublisher.class);
 
-    private static final Logger log =
-            LoggerFactory.getLogger(OutboxPublisher.class);
-
-    private final OutboxEventRepository outboxRepository;
+    private final OutboxClaimService claimService;
+    private final OutboxDeliveryService deliveryService;
     private final KafkaTemplate<String, String> kafkaTemplate;
 
     @Value("${outbox.publisher.topic:order-events}")
     private String topic;
 
     public OutboxPublisher(
-            OutboxEventRepository outboxRepository,
+            OutboxClaimService claimService,
+            OutboxDeliveryService deliveryService,
             KafkaTemplate<String, String> kafkaTemplate) {
-        this.outboxRepository = outboxRepository;
+        this.claimService = claimService;
+        this.deliveryService = deliveryService;
         this.kafkaTemplate = kafkaTemplate;
     }
 
-    @Scheduled(fixedDelay = 5000)
+    @Scheduled(fixedDelayString = "${outbox.publisher.fixed-delay-ms:5000}")
     public void publishPendingEvents() {
-
-        List<OutboxEvent> events =
-                outboxRepository.findTop50ByStatusOrderByIdAsc("PENDING");
-
-        for (OutboxEvent event : events) {
+        List<ClaimedOutboxEvent> events = claimService.claimPendingEvents();
+        for (ClaimedOutboxEvent event : events) {
             try {
-                kafkaTemplate.send(
-                        topic,
-                        String.valueOf(event.getAggregateId()),
-                        event.getPayload()
-                ).get(10, TimeUnit.SECONDS);
-
-                event.setStatus("PUBLISHED");
-                event.setPublishedAt(LocalDateTime.now());
-                outboxRepository.save(event);
-
-                log.info(
-                        "Outbox event {} published to topic {}",
-                        event.getId(), topic
-                );
-
+                kafkaTemplate.send(topic, String.valueOf(event.aggregateId()), event.payload())
+                        .get(10, TimeUnit.SECONDS);
+                deliveryService.markPublished(event.id());
+                log.info("Outbox event {} published to topic {}", event.id(), topic);
             } catch (Exception exception) {
-                event.setAttempts(event.getAttempts() + 1);
-                outboxRepository.save(event);
-
-                log.error(
-                        "Failed to publish outbox event {}. Attempt {}",
-                        event.getId(), event.getAttempts(), exception
-                );
+                try {
+                    deliveryService.markFailed(event.id(), exception);
+                } catch (RuntimeException persistenceException) {
+                    // Lease expiry makes PROCESSING rows recoverable after this failure.
+                    log.error("Could not record failed delivery for outbox event {}",
+                            event.id(), persistenceException);
+                }
+                log.error("Failed to publish outbox event {} (attempt {})",
+                        event.id(), event.attempts() + 1, exception);
             }
         }
     }

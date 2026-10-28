@@ -42,8 +42,8 @@ public class SecurityConfig {
                     new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(
-                    "/actuator/health",
-                    "/actuator/health/**")
+                    "/actuator/health", "/actuator/health/**",
+                    "/actuator/info", "/actuator/prometheus")
                     .permitAll()
 
                 // Service identity is required for stock mutations.

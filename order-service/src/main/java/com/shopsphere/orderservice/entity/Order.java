@@ -34,6 +34,9 @@ public class Order {
     @Column(name = "idempotency_key", unique = true, length = 100)
     private String idempotencyKey;
 
+    @Column(name = "cancellation_command_id", length = 36)
+    private String cancellationCommandId;
+
     // Getters and Setters
     public String getIdempotencyKey() {
         return idempotencyKey;
@@ -41,6 +44,14 @@ public class Order {
 
     public void setIdempotencyKey(String idempotencyKey) {
         this.idempotencyKey = idempotencyKey;
+    }
+
+    public String getCancellationCommandId() {
+        return cancellationCommandId;
+    }
+
+    public void setCancellationCommandId(String cancellationCommandId) {
+        this.cancellationCommandId = cancellationCommandId;
     }
 
     public Long getId() {

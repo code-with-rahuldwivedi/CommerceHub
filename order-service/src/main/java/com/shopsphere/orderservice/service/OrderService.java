@@ -11,4 +11,6 @@ public interface OrderService {
 	);
 	
 	OrderResponse cancelOrder(Long orderId);
+
+	OrderResponse cancelOrder(Long orderId, Long requesterUserId, boolean admin);
 }

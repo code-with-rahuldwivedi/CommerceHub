@@ -1,0 +1,23 @@
+
+services:
+
+  prometheus:
+
+    image: prom/prometheus:latest
+
+    container_name: shopsphere-prometheus
+
+    ports:
+
+      - "9090:9090"
+
+    volumes:
+
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+
+    command:
+
+      - "--config.file=/etc/prometheus/prometheus.yml"
+

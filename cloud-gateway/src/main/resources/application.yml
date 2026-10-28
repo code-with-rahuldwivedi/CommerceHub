@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
 
 spring:
   application:
@@ -46,17 +46,30 @@ spring:
 eureka:
   client:
     service-url:
-      defaultZone: http://localhost:8761/eureka/
+      defaultZone: ${EUREKA_DEFAULT_ZONE:http://localhost:8761/eureka/}
 
 management:
   endpoints:
     web:
       exposure:
-        include: "*"
+        include: health,info,prometheus
 
   endpoint:
     health:
-      show-details: always
+      show-details: never
+
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+  tracing:
+    enabled: false
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:0.1}
+
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
 
 resilience4j:
   circuitbreaker:
@@ -104,3 +117,8 @@ resilience4j:
 
 jwt:
   secret: ${JWT_SECRET}
+
+logging:
+  level:
+    org.springframework.security: WARN
+    com.shopsphere.cloud: INFO

@@ -32,6 +32,15 @@ public class OutboxEvent {
 
     private LocalDateTime publishedAt;
 
+    @Column(name = "claimed_at")
+    private LocalDateTime claimedAt;
+
+    @Column(name = "next_attempt_at")
+    private LocalDateTime nextAttemptAt;
+
+    @Column(name = "last_error", length = 2000)
+    private String lastError;
+
     @Column(nullable = false)
     private Integer attempts = 0;
 
@@ -97,6 +106,15 @@ public class OutboxEvent {
     public LocalDateTime getPublishedAt() {
         return publishedAt;
     }
+
+    public LocalDateTime getClaimedAt() { return claimedAt; }
+    public void setClaimedAt(LocalDateTime claimedAt) { this.claimedAt = claimedAt; }
+
+    public LocalDateTime getNextAttemptAt() { return nextAttemptAt; }
+    public void setNextAttemptAt(LocalDateTime nextAttemptAt) { this.nextAttemptAt = nextAttemptAt; }
+
+    public String getLastError() { return lastError; }
+    public void setLastError(String lastError) { this.lastError = lastError; }
 
     public Integer getAttempts() {
         return attempts;
