@@ -9,9 +9,9 @@ import jakarta.servlet.http.HttpServletRequest;
 /**
  * Forwards the caller's Bearer token to a Feign client.
  *
- * Intentionally NOT annotated with @Configuration. If it were, Spring would
- * component-scan it and apply it to every Feign client (including
- * InventoryClient). It is attached only to the clients that need it via
+ * Intentionally NOT annotated with @Configuration. If it were, Spring could
+ * component-scan it and apply it to every Feign client. It is attached only
+ * to the clients that need it via
  * @FeignClient(configuration = FeignAuthConfig.class).
  */
 public class FeignAuthConfig {

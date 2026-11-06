@@ -1,0 +1,46 @@
+# Non-database test settings (shared by the H2 and the MySQL/Testcontainers tests).
+spring:
+  datasource:
+    # Harmless placeholders; the h2 profile or Testcontainers' @ServiceConnection take over.
+    url: jdbc:mysql://placeholder:3306/placeholder
+    username: placeholder
+    password: placeholder
+  cloud:
+    discovery:
+      enabled: false
+
+eureka:
+  client:
+    enabled: false
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+
+management:
+  tracing:
+    enabled: false
+
+jwt:
+  allow-ephemeral-key: true
+  issuer: test-issuer
+  audience: shopsphere-api
+  access-ttl: PT15M
+  refresh-ttl: P7D
+
+app:
+  lockout:
+    max-attempts: 3
+    lock-duration: PT15M
+  rate-limit:
+    enabled: true
+    auth-requests-per-minute: 1000
+  bootstrap:
+    admin-email: ""
+    admin-password: ""
+  account:
+    require-email-verification: false
+    verify-url: http://localhost/verify-email?token={token}
+    reset-url: http://localhost/reset-password?token={token}
+  mail:
+    log-only: true
+  jobs:
+    purge-cron: "-"

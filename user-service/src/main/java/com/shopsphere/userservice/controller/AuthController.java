@@ -1,12 +1,22 @@
 package com.shopsphere.userservice.controller;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
+import com.shopsphere.userservice.dto.EmailRequest;
 import com.shopsphere.userservice.dto.LoginRequest;
+import com.shopsphere.userservice.dto.RefreshRequest;
 import com.shopsphere.userservice.dto.RegisterRequest;
-import com.shopsphere.userservice.service.UserService;
+import com.shopsphere.userservice.dto.ResetPasswordRequest;
+import com.shopsphere.userservice.dto.TokenRequest;
+import com.shopsphere.userservice.dto.TokenResponse;
+import com.shopsphere.userservice.dto.UserResponse;
+import com.shopsphere.userservice.service.AccountService;
+import com.shopsphere.userservice.service.AuthService;
 
 import jakarta.validation.Valid;
 
@@ -14,31 +24,57 @@ import jakarta.validation.Valid;
 @RequestMapping("/api/auth")
 public class AuthController {
 
-    private final UserService userService;
+    private final AuthService authService;
+    private final AccountService accountService;
 
-    public AuthController(UserService userService) {
-        this.userService = userService;
+    public AuthController(AuthService authService, AccountService accountService) {
+        this.authService = authService;
+        this.accountService = accountService;
     }
 
     @PostMapping("/register")
-    public ResponseEntity<String> register(@Valid @RequestBody RegisterRequest request) {
-        String result = userService.registerUser(request);
-        return ResponseEntity.ok(result);
+    public ResponseEntity<UserResponse> register(@Valid @RequestBody RegisterRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(authService.register(request));
     }
 
     @PostMapping("/login")
-    public ResponseEntity<String> login(@Valid @RequestBody LoginRequest request) {
-        String token = userService.login(request);
-        return ResponseEntity.ok(token);
+    public TokenResponse login(@Valid @RequestBody LoginRequest request) {
+        return authService.login(request);
     }
 
-    @GetMapping("/profile")
-    public ResponseEntity<?> getProfile(Authentication authentication) {
+    @PostMapping("/refresh")
+    public TokenResponse refresh(@Valid @RequestBody RefreshRequest request) {
+        return authService.refresh(request.refreshToken());
+    }
 
-        if (authentication == null) {
-            return ResponseEntity.status(401).body("Unauthorized - JWT missing or invalid");
-        }
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(@Valid @RequestBody RefreshRequest request) {
+        authService.logout(request.refreshToken());
+        return ResponseEntity.noContent().build();
+    }
 
-        return ResponseEntity.ok(authentication.getName());
+    /** 202 whether or not the e-mail exists, so the endpoint cannot be used to enumerate accounts. */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<Void> forgotPassword(@Valid @RequestBody EmailRequest request) {
+        accountService.requestPasswordReset(request.email());
+        return ResponseEntity.accepted().build();
+    }
+
+    @PostMapping("/reset-password")
+    public ResponseEntity<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        accountService.resetPassword(request.token(), request.newPassword());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/verify-email")
+    public ResponseEntity<Void> verifyEmail(@Valid @RequestBody TokenRequest request) {
+        accountService.verifyEmail(request.token());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/resend-verification")
+    public ResponseEntity<Void> resendVerification(@Valid @RequestBody EmailRequest request) {
+        accountService.resendVerificationEmail(request.email());
+        return ResponseEntity.accepted().build();
     }
 }

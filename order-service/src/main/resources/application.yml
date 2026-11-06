@@ -30,20 +30,16 @@ spring:
 
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
     consumer:
       group-id: order-service-group
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
-
-  cloud:
-    openfeign:
-      httpclient:
-        hc5:
-          enabled: true
 
 eureka:
   client:
@@ -51,8 +47,6 @@ eureka:
       defaultZone: ${EUREKA_DEFAULT_ZONE:http://localhost:8761/eureka/}
 
 inventory:
-  service:
-    token: ${INVENTORY_SERVICE_TOKEN}
   kafka:
     result-topic: inventory-events
 
@@ -61,9 +55,8 @@ jwt:
 
 logging:
   level:
-    org.springframework.security: TRACE
-    org.springframework.security.web.FilterChainProxy: TRACE
-    com.shopsphere.orderservice: DEBUG
+    org.springframework.security: INFO
+    com.shopsphere.orderservice: INFO
     org.hibernate.SQL: WARN
 
 management:
@@ -71,16 +64,20 @@ management:
     web:
       exposure:
         include: health,info,prometheus
+
   endpoint:
     health:
       show-details: never
+
   metrics:
     tags:
       application: ${spring.application.name}
+
   tracing:
     enabled: false
     sampling:
       probability: ${TRACING_SAMPLING_PROBABILITY:0.1}
+
   otlp:
     tracing:
       endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}

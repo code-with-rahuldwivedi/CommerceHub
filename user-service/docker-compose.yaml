@@ -1,0 +1,40 @@
+# Local development only. Usage:
+#   docker compose up --build
+# The signing key is generated at startup (JWT_ALLOW_EPHEMERAL_KEY) and e-mails are written to the
+# container log (MAIL_LOG_ONLY). Both are for development; production values are in the README.
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: shopsphere_user_db
+      MYSQL_USER: shopsphere
+      MYSQL_PASSWORD: local-dev-only-password
+      MYSQL_ROOT_PASSWORD: local-dev-only-root
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-plocal-dev-only-root"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  user-service:
+    build: .
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/shopsphere_user_db
+      DB_USERNAME: shopsphere
+      DB_PASSWORD: local-dev-only-password
+      JWT_ALLOW_EPHEMERAL_KEY: "true"
+      EUREKA_ENABLED: "false"
+      EUREKA_DEFAULT_ZONE: http://localhost:8761/eureka/
+      APP_VERIFY_URL: http://localhost:3000/verify-email?token={token}
+      APP_RESET_URL: http://localhost:3000/reset-password?token={token}
+      MAIL_LOG_ONLY: "true"
+      EMAIL_VERIFICATION_REQUIRED: "false"
+      ADMIN_EMAIL: admin@example.com
+      ADMIN_PASSWORD: change-me-local-admin-1
+      # the lines below are only needed because compose publishes the port to your machine
+      RATE_LIMIT_AUTH_PER_MIN: "60"
