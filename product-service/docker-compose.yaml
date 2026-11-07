@@ -1,0 +1,32 @@
+# Local development only. Needs user-service running on the host (port 8081) because tokens are
+# verified against its JWKS:   docker compose up --build
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: shopsphere_product_db
+      MYSQL_USER: shopsphere
+      MYSQL_PASSWORD: local-dev-only-password
+      MYSQL_ROOT_PASSWORD: local-dev-only-root
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-plocal-dev-only-root"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  product-service:
+    build: .
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8082:8082"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DB_URL: jdbc:mysql://mysql:3306/shopsphere_product_db
+      DB_USERNAME: shopsphere
+      DB_PASSWORD: local-dev-only-password
+      JWT_JWKS_URI: http://host.docker.internal:8081/.well-known/jwks.json
+      EUREKA_ENABLED: "false"
+      EUREKA_DEFAULT_ZONE: http://localhost:8761/eureka/

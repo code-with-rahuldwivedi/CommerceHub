@@ -1,6 +1,7 @@
 spring:
   application:
     name: user-service
+
   datasource:
     url: ${DB_URL}
     username: ${DB_USERNAME}
@@ -12,6 +13,7 @@ spring:
       validation-timeout: 2000
       max-lifetime: 1500000
       leak-detection-threshold: 20000
+
   jpa:
     open-in-view: false
     show-sql: false
@@ -21,11 +23,14 @@ spring:
       hibernate:
         jdbc:
           time_zone: UTC
+
   flyway:
     enabled: true
     baseline-on-migrate: false
+
   lifecycle:
     timeout-per-shutdown-phase: 30s
+
   task:
     execution:
       thread-name-prefix: app-async-
@@ -33,9 +38,10 @@ spring:
         core-size: 2
         max-size: 8
         queue-capacity: 500
-  # SMTP is configured ONLY through environment variables (SPRING_MAIL_HOST, SPRING_MAIL_PORT,
-  # SPRING_MAIL_USERNAME, SPRING_MAIL_PASSWORD, ...). Defining spring.mail.host here, even empty,
-  # would create a broken mail sender.
+
+  # SMTP is configured ONLY through environment variables.
+  # SPRING_MAIL_HOST, SPRING_MAIL_PORT, SPRING_MAIL_USERNAME,
+  # SPRING_MAIL_PASSWORD, etc.
 
 server:
   port: ${SERVER_PORT:8081}
@@ -43,7 +49,6 @@ server:
   max-http-request-header-size: 16KB
   tomcat:
     connection-timeout: 10s
-  # Set to "native" behind a trusted proxy/load balancer so the rate limiter sees the real client IP.
   forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:none}
 
 eureka:
@@ -69,7 +74,7 @@ management:
           include: readinessState,db
   health:
     mail:
-      enabled: false   # an SMTP outage must not take the service out of rotation
+      enabled: false
   metrics:
     tags:
       application: ${spring.application.name}
@@ -82,12 +87,9 @@ management:
       endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
 
 jwt:
-  # PKCS#8 private key, PEM or single-line Base64 DER. Generate with scripts/generate-jwt-key.sh
+  # PKCS#8 private key, PEM or single-line Base64 DER.
   private-key: ${JWT_PRIVATE_KEY:}
-  # Public keys (X.509, Base64 DER, comma separated) of keys being retired, kept so tokens signed
-  # with them still verify (and stay in the JWKS) until they expire.
   previous-public-keys: ${JWT_PREVIOUS_PUBLIC_KEYS:}
-  # Local development / tests only: generate a throw-away key at startup (differs per instance!).
   allow-ephemeral-key: ${JWT_ALLOW_EPHEMERAL_KEY:false}
   issuer: ${JWT_ISSUER:shopsphere-user-service}
   audience: ${JWT_AUDIENCE:shopsphere-api}
@@ -98,31 +100,38 @@ app:
   lockout:
     max-attempts: ${LOCKOUT_MAX_ATTEMPTS:5}
     lock-duration: ${LOCKOUT_DURATION:PT15M}
+
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:true}
     auth-requests-per-minute: ${RATE_LIMIT_AUTH_PER_MIN:20}
+
   bootstrap:
     admin-email: ${ADMIN_EMAIL:}
     admin-password: ${ADMIN_PASSWORD:}
     admin-name: ${ADMIN_NAME:Administrator}
+
   account:
     require-email-verification: ${EMAIL_VERIFICATION_REQUIRED:false}
     verification-ttl: PT24H
     password-reset-ttl: PT30M
     resend-cooldown: PT1M
-    # Links put into e-mails. {token} is replaced. Point them at your frontend / gateway page.
-    verify-url: ${APP_VERIFY_URL}
-    reset-url: ${APP_RESET_URL}
+
+    # Direct User Service URLs for local testing.
+    # {token} is replaced by MailService.
+    verify-url: ${APP_VERIFY_URL:http://localhost:8081/api/auth/verify-email?token={token}}
+    reset-url: ${APP_RESET_URL:http://localhost:8081/api/auth/reset-password?token={token}}
+
   mail:
     from: ${MAIL_FROM:no-reply@example.com}
-    # DEV ONLY: log e-mails (including the secret tokens!) instead of sending them.
     log-only: ${MAIL_LOG_ONLY:false}
+
   audit:
     retention-days: ${AUDIT_RETENTION_DAYS:365}
+
   request:
     max-body-bytes: 16384
+
   jobs:
-    # Housekeeping. Set to "-" on all replicas except one to run it only once.
     purge-cron: ${PURGE_CRON:0 30 3 * * *}
 
 logging:

@@ -1,4 +1,3 @@
-
 package com.shopsphere.userservice.service;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;

@@ -1,86 +1,36 @@
-
 package com.shopsphere.productservice.dto;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 import com.shopsphere.productservice.entity.Category;
+import com.shopsphere.productservice.entity.Product;
+import com.shopsphere.productservice.entity.ProductStatus;
 
-public class ProductResponse {
+/** Timestamps are UTC. "version" is what you send back as "version" when updating. */
+public record ProductResponse(
+        Long id,
+        String name,
+        String description,
+        BigDecimal price,
+        Category category,
+        ProductStatus status,
+        String imageUrl,
+        Long version,
+        LocalDateTime createdAt,
+        LocalDateTime updatedAt) {
 
-    private Long id;
-    private String name;
-    private String description;
-    private BigDecimal price;
-    private Category category;
-    private String imageUrl;
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
-
-    public ProductResponse() {
-    }
-
-    public Long getId() {
-        return id;
-    }
-
-    public void setId(Long id) {
-        this.id = id;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
-
-    public String getDescription() {
-        return description;
-    }
-
-    public void setDescription(String description) {
-        this.description = description;
-    }
-
-    public BigDecimal getPrice() {
-        return price;
-    }
-
-    public void setPrice(BigDecimal price) {
-        this.price = price;
-    }
-
-    public Category getCategory() {
-        return category;
-    }
-
-    public void setCategory(Category category) {
-        this.category = category;
-    }
-
-    public String getImageUrl() {
-        return imageUrl;
-    }
-
-    public void setImageUrl(String imageUrl) {
-        this.imageUrl = imageUrl;
-    }
-
-    public LocalDateTime getCreatedAt() {
-        return createdAt;
-    }
-
-    public void setCreatedAt(LocalDateTime createdAt) {
-        this.createdAt = createdAt;
-    }
-
-    public LocalDateTime getUpdatedAt() {
-        return updatedAt;
-    }
-
-    public void setUpdatedAt(LocalDateTime updatedAt) {
-        this.updatedAt = updatedAt;
+    public static ProductResponse from(Product product) {
+        return new ProductResponse(
+                product.getId(),
+                product.getName(),
+                product.getDescription(),
+                product.getPrice(),
+                product.getCategory(),
+                product.getStatus(),
+                product.getImageUrl(),
+                product.getVersion(),
+                product.getCreatedAt(),
+                product.getUpdatedAt());
     }
 }

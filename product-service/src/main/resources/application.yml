@@ -1,15 +1,89 @@
 spring:
   application:
-    name: PRODUCT-SERVICE
+    name: product-service
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:20}
+      minimum-idle: ${DB_POOL_MIN_IDLE:5}
+      connection-timeout: 3000
+      validation-timeout: 2000
+      max-lifetime: 1500000
+      leak-detection-threshold: 20000
+  jpa:
+    open-in-view: false
+    show-sql: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
 
 server:
   port: ${SERVER_PORT:8082}
+  shutdown: graceful
+  max-http-request-header-size: 16KB
+  tomcat:
+    connection-timeout: 10s
+  # Set to "native" behind a trusted proxy / gateway.
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:none}
 
 eureka:
   client:
-    register-with-eureka: true
-    fetch-registry: true
+    enabled: ${EUREKA_ENABLED:true}
     service-url:
-      defaultZone: ${EUREKA_DEFAULT_ZONE:http://localhost:8761/eureka/}
+      defaultZone: ${EUREKA_DEFAULT_ZONE}
   instance:
-    hostname: localhost 
+    prefer-ip-address: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  tracing:
+    enabled: ${TRACING_ENABLED:false}
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:0.1}
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+
+# Access tokens are issued by user-service (RS256) and verified here with its public keys.
+security:
+  jwt:
+    jwks-uri: ${JWT_JWKS_URI}
+    issuer: ${JWT_ISSUER:shopsphere-user-service}
+    audience: ${JWT_AUDIENCE:shopsphere-api}
+    connect-timeout: PT2S
+    read-timeout: PT3S
+
+app:
+  request:
+    max-body-bytes: 16384
+
+logging:
+  pattern:
+    level: "%5p [%X{requestId:-}]"
+  level:
+    root: INFO
+    com.shopsphere.productservice: INFO
