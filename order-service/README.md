@@ -539,12 +539,3 @@ order-service/
 ├── docker-compose.yaml
 ├── pom.xml
 └── README.md
-```
-
-## Notes
-
-- Keep secrets and production credentials out of source control.
-- The included Docker Compose setup is for local development, not production deployment.
-- The default `ORDER_MAX_ITEMS` is `1`; configure it deliberately when enabling multi-item ordering and ensure the downstream inventory workflow supports it.
-- Payment and inbound event processing are disabled by default and must be enabled/configured together with the corresponding downstream services.
-- For exact event schemas and transition rules, refer to the event and state-machine classes in the source code.
