@@ -1,462 +1,401 @@
-# ShopSphere – E-Commerce Microservices Backend
+# ShopSphere API Gateway
 
-A Java-based e-commerce backend application built using **Spring Boot 3 and Microservices Architecture**. ShopSphere demonstrates backend development concepts including secure authentication, product management, order processing, inventory coordination, and event-driven communication using Apache Kafka.
+The **ShopSphere API Gateway** is the single entry point for client requests in the ShopSphere E-Commerce Microservices application. It is built using Java, Spring Boot, and Spring Cloud Gateway Server MVC.
 
-The project focuses on building maintainable backend services using REST APIs, JWT authentication, service discovery, database migrations, idempotent operations, and asynchronous event processing.
+It provides centralized request routing, JWT authentication, security controls, rate limiting, request filtering, and resilience features for downstream microservices.
 
-## Tech Stack
+## Key Features
 
-| Category | Technologies |
+- **Centralized Routing:** Routes incoming API requests to the appropriate microservices.
+- **JWT Authentication:** Validates RS256 access tokens using the User Service's JWKS endpoint.
+- **Token Validation:** Supports public-key-based JWT verification, including token claims validation.
+- **CORS Configuration:** Provides centralized Cross-Origin Resource Sharing configuration.
+- **Rate Limiting:** Controls incoming request rates using a token-bucket implementation.
+- **Request Size Limiting:** Rejects requests that exceed the configured size limit.
+- **Correlation ID:** Generates or propagates correlation IDs for request tracking across services.
+- **Access Logging:** Provides request-level logging for monitoring and debugging.
+- **Resilience:** Supports fallback handling and resilience configuration for downstream failures.
+- **Standardized Error Responses:** Uses structured Problem Details responses.
+- **Docker Support:** Supports containerized deployment.
+- **Kubernetes Support:** Includes Kubernetes deployment configuration.
+
+## Technology Stack
+
+| Technology | Purpose |
 |---|---|
-| Language | Java 17 |
-| Backend Framework | Spring Boot 3, Spring MVC |
-| Security | Spring Security, JWT, BCrypt |
-| Database | MySQL 8 |
-| ORM | Spring Data JPA, Hibernate |
-| Database Migration | Flyway |
-| Microservices | Spring Cloud Gateway, Eureka |
-| Service Communication | OpenFeign, REST APIs |
-| Messaging | Apache Kafka |
-| Resilience | Resilience4j |
-| Build Tool | Maven |
-| Testing | JUnit 5, Mockito, Spring Boot Test |
-| Containerization | Docker, Docker Compose |
-| Monitoring | Prometheus configuration |
+| Java 17 | Programming language |
+| Spring Boot 3.x | Application framework |
+| Spring Cloud Gateway Server MVC | API gateway and routing |
+| Spring Security | Security configuration |
+| Spring Security OAuth2 Resource Server | JWT validation |
+| JWKS | Public key distribution |
+| Maven | Build and dependency management |
+| Eureka | Service discovery |
+| Resilience4j | Resilience patterns |
+| Docker | Containerization |
+| Kubernetes | Container orchestration |
+| JUnit 5 | Unit and integration testing |
+| Mockito | Mock-based testing |
+| Actuator | Application monitoring |
+| Prometheus | Metrics collection |
 
 ## Architecture
 
 ```text
-                         Client
-                           |
-                           v
-                   API Gateway :8080
-                           |
-          +----------------+----------------+
-          |                |                |
-          v                v                v
-     User Service     Product Service   Order Service
-       :8081             :8082             :8083
-                                              |
-                                              |
-                                         Kafka Events
-                                              |
-                                              v
-                                       Inventory Service
-                                            :8084
-
-                   Eureka Service Registry
-                           :8761
+                   Client / Frontend
+                          |
+                          |
+                          v
+                +-------------------+
+                |   API Gateway     |
+                |    Port: 8080     |
+                +-------------------+
+                          |
+             +------------+------------+
+             |            |            |
+             v            v            v
+        Authentication  Routing    Security Filters
+        JWT / JWKS      & Eureka    Rate Limiting
+             |            |        CORS / Logging
+             |            |        Request Validation
+             |            |
+             +------------+
+                          |
+             +------------+-------------+
+             |            |             |
+             v            v             v
+        User Service  Product Service  Order Service
+          :8081          :PORT           :PORT
+             |            |             |
+             v            v             v
+          MySQL         MySQL          MySQL
 ```
 
-### Architecture Overview
+The Gateway acts as the centralized entry point and forwards requests to the appropriate downstream service.
 
-- **API Gateway:** Provides a single entry point for incoming client requests and routes them to the appropriate microservice.
-- **Eureka Server:** Supports service registration and discovery.
-- **OpenFeign:** Enables synchronous communication between microservices.
-- **Apache Kafka:** Supports asynchronous communication between Order Service and Inventory Service.
-- **MySQL:** Each business service maintains its own database responsibilities.
-- **Outbox Pattern:** Helps coordinate database changes and event publishing.
+## Request Processing Flow
+
+1. A client sends an HTTP request to the API Gateway.
+2. The Gateway applies configured request filters.
+3. Security configuration determines whether authentication is required.
+4. Protected requests undergo JWT validation using the configured JWKS endpoint.
+5. Request validation, rate limiting, and other configured filters are applied.
+6. The Gateway matches the request against configured routes.
+7. The request is forwarded to the appropriate microservice.
+8. The downstream response is returned to the client.
+
+## Security
+
+### JWT Authentication with JWKS
+
+The Gateway validates access tokens issued by the User Service.
+
+- Uses RS256 public-key verification.
+- Retrieves public keys from the JWKS endpoint.
+- Supports key identification through the JWT `kid` header.
+- Validates configured token claims, including issuer and audience.
+- Rejects invalid or expired tokens on protected routes.
+- Keeps token-signing private keys outside the Gateway.
+
+Example JWKS endpoint:
+
+```text
+http://localhost:8081/.well-known/jwks.json
+```
+
+The actual endpoint and token validation settings are configurable.
+
+### CORS
+
+CORS is configured centrally to control which frontend origins, HTTP methods, and headers are allowed to access the Gateway APIs.
+
+### Rate Limiting
+
+The Gateway uses a token-bucket-based rate-limiting implementation to control incoming traffic.
+
+When the configured request limit is exceeded, the Gateway can return:
+
+```text
+HTTP 429 - Too Many Requests
+```
+
+### Request Size Limiting
+
+The request-size filter protects the Gateway from excessively large incoming requests by enforcing configured size limits.
+
+## Request Tracking and Logging
+
+The Gateway includes request tracking and logging components.
+
+| Component | Responsibility |
+|---|---|
+| CorrelationIdFilter | Generates or propagates correlation IDs |
+| AccessLogFilter | Records request-related information |
+| HeaderRequestWrapper | Handles configured request-header processing |
+| ProblemWriter | Writes standardized error responses |
+| RateLimitFilter | Enforces request-rate policies |
+| RequestSizeLimitFilter | Controls incoming request size |
+| TokenBucket | Implements token-bucket rate calculation |
+
+Correlation IDs help trace a request across multiple microservices.
+
+## Resilience and Fallback Handling
+
+The Gateway includes resilience configuration and fallback handling for downstream service failures.
+
+These mechanisms help provide controlled responses when a dependent service is unavailable or a request cannot be completed successfully.
+
+The exact retry, timeout, and circuit-breaker behaviour depends on the configured resilience policies.
 
 ## Project Structure
 
 ```text
-ShopSphere-Microservices/
+cloud-gateway/
 │
-├── service-registry/
-├── cloud-gateway/
-├── user-service/
-├── product-service/
-├── order-service/
-├── inventory-service/
+├── src/
+│   ├── main/
+│   │   ├── java/com/shopsphere/cloud/
+│   │   │   │
+│   │   │   ├── CloudGatewayApplication.java
+│   │   │   │
+│   │   │   ├── config/
+│   │   │   │   ├── GatewayProperties.java
+│   │   │   │   ├── ResilienceConfig.java
+│   │   │   │   ├── SecurityConfig.java
+│   │   │   │   └── SecurityJwtProperties.java
+│   │   │   │
+│   │   │   ├── controller/
+│   │   │   │   └── FallbackController.java
+│   │   │   │
+│   │   │   ├── security/
+│   │   │   │   └── JwtDecoderFactory.java
+│   │   │   │
+│   │   │   └── web/
+│   │   │       ├── AccessLogFilter.java
+│   │   │       ├── CorrelationIdFilter.java
+│   │   │       ├── HeaderRequestWrapper.java
+│   │   │       ├── ProblemWriter.java
+│   │   │       ├── RateLimitFilter.java
+│   │   │       ├── RequestSizeLimitFilter.java
+│   │   │       └── TokenBucket.java
+│   │   │
+│   │   └── resources/
+│   │       ├── application.yml
+│   │       └── application-local.yml
+│   │
+│   └── test/
+│       ├── java/com/shopsphere/cloud/
+│       │   ├── controller/
+│       │   ├── security/
+│       │   └── web/
+│       │
+│       └── resources/
+│           └── application.properties
 │
-├── prometheus/
-├── docker-compose.yml
+├── k8s/
+│   └── gateway.yaml
+│
+├── Dockerfile
+├── pom.xml
 └── README.md
 ```
 
-Each microservice has its own Maven configuration and application properties. Database schema changes are maintained using Flyway migrations.
+## Prerequisites
 
-## Microservices
+Make sure the following tools are installed:
 
-### 1. Service Registry – Eureka
+- Java 17 or later
+- Maven 3.8+
+- Docker
+- MySQL (for the dependent services)
+- Running User Service and other required downstream services
+- Eureka Service Registry, if service discovery is enabled
 
-**Port:** `8761`
+## Configuration
 
-- Service registration and discovery.
-- Centralized service registry.
-- Dynamic discovery of registered services.
-
-### 2. API Gateway
-
-**Port:** `8080`
-
-- Central entry point for client requests.
-- Routes requests to appropriate microservices.
-- JWT authentication filter.
-- Role-based access control.
-- Resilience4j circuit-breaker integration.
-- Fallback and timeout configuration.
-
-### 3. User Service
-
-**Port:** `8081`
-
-- User registration and login.
-- Password encryption using BCrypt.
-- JWT generation and validation.
-- Role-based authorization.
-- Spring Security integration.
-- MySQL persistence.
-
-**Supported roles:**
-- `USER`
-- `ADMIN`
-
-### 4. Product Service
-
-**Port:** `8082`
-
-- Create and manage products.
-- Retrieve all products.
-- Retrieve product details by ID.
-- Request validation.
-- JWT verification and authorization.
-- MySQL persistence.
-
-| Operation | Access |
-|---|---|
-| Get all products | Public, as configured |
-| Get product by ID | Public, as configured |
-| Create product | ADMIN |
-| Update product | ADMIN |
-| Delete product | ADMIN |
-
-### 5. Order Service
-
-**Port:** `8083`
-
-- Place and persist customer orders.
-- Retrieve product details using OpenFeign.
-- Calculate order totals using product prices and quantities.
-- Manage order statuses.
-- Validate authenticated user identity.
-- Handle duplicate requests using idempotency keys.
-- Prevent duplicate order creation.
-- Publish order events using the Outbox Pattern.
-- Consume inventory result events from Kafka.
-
-**Idempotency handling:**
-
-The Order Service uses an `Idempotency-Key` request header to prevent duplicate order creation.
-
-- Same key + same request: Returns the existing order.
-- Same key + different request: Returns HTTP `409 Conflict`.
-- Database uniqueness constraints help protect against concurrent duplicate requests.
-
-Example:
-
-```http
-POST /api/orders
-Idempotency-Key: order-shop-001
-Authorization: Bearer <JWT_TOKEN>
-Content-Type: application/json
-```
-
-### 6. Inventory Service
-
-**Port:** `8084`
-
-- Manages inventory and stock operations.
-- Consumes order-related Kafka events.
-- Publishes inventory result events.
-- Maintains outgoing events using the Outbox Pattern.
-- Processes pending outbox events.
-- Includes duplicate-operation protection.
-
-Inventory retry behavior, concurrency handling, and recovery guarantees should be validated through implementation and integration tests before being considered production-ready.
-
-## Communication Between Services
-
-ShopSphere uses both synchronous and asynchronous communication.
-
-### Synchronous Communication – OpenFeign
-
-Order Service communicates with Product Service to retrieve product details.
+Application configuration is maintained in:
 
 ```text
-Client
-  |
-  v
-API Gateway
-  |
-  v
-Order Service
-  |
-  v
-OpenFeign
-  |
-  v
-Product Service
+src/main/resources/application.yml
 ```
 
-This allows the Order Service to retrieve product information before processing an order.
-
-### Asynchronous Communication – Apache Kafka
-
-Kafka supports communication between Order Service and Inventory Service.
+Local development configuration:
 
 ```text
-Order Service
-     |
-     v
-Order Database + Outbox
-     |
-     v
-Outbox Publisher
-     |
-     v
-Kafka Order Event
-     |
-     v
-Inventory Service
-     |
-     v
-Inventory Database + Outbox
-     |
-     v
-Kafka Inventory Result Event
-     |
-     v
-Order Service Consumer
+src/main/resources/application-local.yml
 ```
 
-### Outbox Pattern
+Configure the following values through the application's supported configuration properties or environment variables:
 
-The Outbox Pattern is used to coordinate database updates with event publishing.
-
-Instead of relying on a database update and Kafka publishing as two independent operations, an event is stored in the database as part of the relevant transaction and published asynchronously.
-
-This reduces the risk of losing events when a database transaction succeeds but event publishing fails.
-
-Reliable operation still depends on retry handling, event claiming, transaction boundaries, and idempotent consumers.
-
-## Security
-
-- JWT-based authentication.
-- Stateless Spring Security configuration.
-- BCrypt password hashing.
-- Role-based authorization.
-- Token validation at the gateway and relevant services.
-- Environment-based configuration for sensitive information.
-
-### Environment Variables
-
-Configure sensitive values through environment variables.
-
-```properties
-DB_PASSWORD=
-JWT_SECRET=
-INVENTORY_SERVICE_TOKEN=
-```
-
-Never commit actual passwords, JWT secrets, access tokens, or production credentials to GitHub.
-
-## Reliability and Error Handling
-
-The project includes reliability-oriented mechanisms such as:
-
-- Idempotency-key handling for order requests.
-- Database uniqueness constraints.
-- Outbox-based event publishing.
-- Kafka event consumers.
-- Resilience4j circuit-breaker configuration.
-- Configurable timeout and fallback handling.
-- Flyway database migrations.
-- Unit and service-level tests.
-
-These mechanisms improve reliability but do not automatically guarantee exactly-once processing or eliminate all distributed-system failures.
-
-## Database Design
-
-Each microservice maintains data according to its business responsibility.
-
-| Service | Primary Data |
+| Configuration | Description |
 |---|---|
-| User Service | Users, authentication, roles |
-| Product Service | Products and categories |
-| Order Service | Orders, order statuses, outbox events |
-| Inventory Service | Inventory records, outbox events |
+| JWT JWKS URI | User Service public-key endpoint |
+| JWT Issuer | Expected token issuer |
+| JWT Audience | Expected token audience |
+| Eureka URL | Service Registry endpoint |
+| Gateway Port | Public API port |
+| Actuator Port | Internal monitoring port |
+| CORS Origins | Allowed frontend origins |
+| Rate Limit | Configured request-rate policy |
+| Request Size Limit | Maximum permitted request size |
 
-**Database technologies:**
-- MySQL 8
-- Spring Data JPA
-- Hibernate
-- Flyway
+**Important:** Never commit private keys, passwords, database credentials, or production secrets to GitHub.
 
-## REST API Overview
+## Running Locally
 
-### Authentication APIs
+### 1. Clone the Repository
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| POST | `/api/auth/register` | Register a user |
-| POST | `/api/auth/login` | Authenticate a user |
+```bash
+git clone https://github.com/code-with-rahuldwivedi/CommerceHub.git
+```
 
-### Product APIs
+### 2. Navigate to API Gateway
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| GET | `/api/getAllProducts` | Retrieve all products |
-| GET | `/api/product/{id}` | Retrieve product by ID |
-| POST | `/api/createProduct` | Create a product |
-| PUT | `/api/product/{id}` | Update a product |
-| DELETE | `/api/product/{id}` | Delete a product |
+```bash
+cd CommerceHub/cloud-gateway
+```
 
-### Order APIs
+### 3. Build the Application
 
-| Method | Endpoint | Purpose |
-|---|---|---|
-| POST | `/api/orders` | Place an order |
+```bash
+mvn clean package
+```
 
-Order creation requires authentication and an `Idempotency-Key` header. Refer to the service controllers for the exact request and response formats.
+### 4. Run the Application
+
+```bash
+mvn spring-boot:run
+```
+
+To activate the local profile:
+
+```bash
+mvn spring-boot:run -Dspring-boot.run.profiles=local
+```
+
+The Gateway requires its configured dependencies and downstream services to be available for end-to-end request routing.
+
+## Docker Deployment
+
+### Build Docker Image
+
+```bash
+docker build -t shopsphere-api-gateway:latest .
+```
+
+### Run Docker Container
+
+```bash
+docker run -d \
+  --name shopsphere-api-gateway \
+  -p 8080:8080 \
+  shopsphere-api-gateway:latest
+```
+
+Supply the required environment variables and service connectivity settings according to your deployment configuration.
+
+## Kubernetes Deployment
+
+A Kubernetes manifest is available at:
+
+```text
+k8s/gateway.yaml
+```
+
+Apply the manifest using:
+
+```bash
+kubectl apply -f k8s/gateway.yaml
+```
+
+Check deployment status:
+
+```bash
+kubectl get deployments
+kubectl get pods
+kubectl get services
+```
+
+## Monitoring and Health Checks
+
+Spring Boot Actuator provides application health and monitoring endpoints.
+
+| Endpoint | Purpose |
+|---|---|
+| `/actuator/health` | Application health |
+| `/actuator/info` | Application information |
+| `/actuator/prometheus` | Prometheus metrics |
+
+The public API runs on port `8080`. The Actuator management port is configured separately and should remain internal to the deployment environment.
 
 ## Testing
 
-The project contains tests for service logic, order processing, and Kafka event handling.
+The project includes unit and security tests using JUnit 5 and Mockito.
 
-Run tests from an individual microservice directory:
+Important test areas include:
+
+- Gateway security configuration
+- JWT decoder creation and validation
+- Fallback controller behaviour
+- Correlation ID handling
+- Rate-limiting behaviour
+- Request-size validation
+
+Run tests:
+
+```bash
+mvn test
+```
+
+Run the complete Maven verification lifecycle:
 
 ```bash
 mvn clean verify
 ```
 
-Run the command separately in:
+## API Access
+
+The Gateway exposes the configured microservice routes through a single entry point.
+
+Example base URL:
 
 ```text
-service-registry
-cloud-gateway
-user-service
-product-service
-order-service
-inventory-service
+http://localhost:8080
 ```
 
-A successful build verifies the checks configured in that module. Additional integration, security, concurrency, and failure-recovery tests are recommended before production deployment.
+Requests are routed according to the path predicates and destination URIs configured in `application.yml`.
 
-## Docker and Deployment
+Refer to the application route configuration for the exact API paths and downstream service mappings.
 
-Dockerfiles and Docker Compose configuration are included in the repository.
+## Design Benefits
 
-Validate the Docker Compose configuration:
+- Provides a single entry point for multiple microservices.
+- Centralizes authentication and security enforcement.
+- Reduces client-side service discovery complexity.
+- Improves request observability through correlation IDs and access logs.
+- Helps control incoming traffic through rate limiting.
+- Provides consistent error handling and fallback behaviour.
+- Supports containerized and Kubernetes-based deployment.
 
-```bash
-docker compose config
-```
+## Future Improvements
 
-Before starting the complete application, configure the required environment variables and verify that the Compose configuration includes all required services, databases, Kafka, health checks, and dependencies.
+- Distributed rate limiting using a shared store.
+- Enhanced distributed tracing and observability.
+- Additional integration and load testing.
+- Centralized secrets management.
+- Automated deployment pipelines.
+- Further resilience and fault-tolerance improvements.
 
-Prometheus configuration is also included for monitoring-related setup.
-
-## Local Development Setup
-
-### Prerequisites
-
-- JDK 17
-- Maven
-- MySQL 8
-- Apache Kafka
-- Git
-- Docker (optional)
-
-### Starting the Services
-
-Start each service in a separate terminal.
-
-**1. Eureka Service Registry**
-
-```bash
-cd service-registry
-mvn spring-boot:run
-```
-
-**2. User Service**
-
-```bash
-cd user-service
-mvn spring-boot:run
-```
-
-**3. Product Service**
-
-```bash
-cd product-service
-mvn spring-boot:run
-```
-
-**4. Inventory Service**
-
-```bash
-cd inventory-service
-mvn spring-boot:run
-```
-
-**5. Order Service**
-
-```bash
-cd order-service
-mvn spring-boot:run
-```
-
-**6. API Gateway**
-
-```bash
-cd cloud-gateway
-mvn spring-boot:run
-```
-
-Ensure that MySQL, Kafka, environment variables, and service configurations are ready before starting the application.
-
-## Project Status
-
-| Component | Status |
-|---|---|
-| Eureka Service Registry | Implemented |
-| API Gateway and Routing | Implemented |
-| User Authentication and JWT | Implemented |
-| Product Management APIs | Implemented |
-| Order Creation and Persistence | Implemented |
-| OpenFeign Integration | Implemented |
-| Order Idempotency Handling | Tested |
-| Kafka Event Processing Components | Implemented |
-| Outbox Pattern Components | Implemented |
-| Inventory Service Components | Implemented |
-| Flyway Migration Files | Included |
-| Docker and Compose Configuration | Included |
-| Full Production Deployment Validation | Pending |
-
-*Note: Implemented components and configurations should not be confused with complete production validation. Integration, concurrency, recovery, and deployment tests are still important.*
-
-## Future Enhancements
-
-- Payment Service integration.
-- Email and push notifications.
-- Kubernetes deployment.
-- CI/CD pipeline.
-- Centralized logging and distributed tracing.
-- Automated load and performance testing.
-- Production-grade secrets management.
-- Monitoring dashboards and alerting.
-- Backup and disaster recovery.
-- Deployment rollback procedures.
-
-## Developer
+## Author
 
 **Rahul Dwivedi**
 
-Java Backend / Full Stack Developer
+Java Backend Developer
 
-**Core Skills:** Java, Spring Boot, Spring Security, Microservices, REST APIs, MySQL, Hibernate/JPA, JWT, Apache Kafka, Docker, AWS.
+**Project:** ShopSphere – E-Commerce Microservices Backend
+
+**GitHub:** https://github.com/code-with-rahuldwivedi/CommerceHub
 
 ---
 
-If you find this project useful, consider giving the repository a ⭐ star.
+*ShopSphere is a microservices-based e-commerce backend project focused on secure API communication, service routing, reliability, and maintainable backend architecture.*
