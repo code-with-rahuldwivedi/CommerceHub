@@ -1,18 +1,24 @@
 package com.shopsphere.orderservice.repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 import com.shopsphere.orderservice.entity.Order;
 import com.shopsphere.orderservice.entity.OrderStatus;
 
-@Repository
-public interface OrderRepository extends JpaRepository<Order, Long> {
+public interface OrderRepository extends JpaRepository<Order, Long>, JpaSpecificationExecutor<Order> {
 
-    Optional<Order> findByIdempotencyKey(String idempotencyKey);
+    /** Loads the order together with its lines, so it can be mapped after the transaction ended. */
+    @EntityGraph(attributePaths = "items")
+    Optional<Order> findWithItemsById(Long id);
 
-    List<Order> findTop50ByStatusOrderByOrderDateAsc(OrderStatus status);
+    @EntityGraph(attributePaths = "items")
+    Optional<Order> findByUserIdAndIdempotencyKey(Long userId, String idempotencyKey);
+
+    List<Order> findTop100ByStatusAndUpdatedAtBeforeOrderByUpdatedAtAsc(OrderStatus status, LocalDateTime cutoff);
 }

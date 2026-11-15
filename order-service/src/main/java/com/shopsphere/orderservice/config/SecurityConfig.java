@@ -1,92 +1,96 @@
 package com.shopsphere.orderservice.config;
 
-import jakarta.servlet.DispatcherType;
-
+import org.springframework.boot.actuate.autoconfigure.security.servlet.EndpointRequest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
+import org.springframework.security.oauth2.server.resource.web.BearerTokenAuthenticationEntryPoint;
+import org.springframework.security.oauth2.server.resource.web.access.BearerTokenAccessDeniedHandler;
+import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
-import org.springframework.security.web.authentication.HttpStatusEntryPoint;
-import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.access.expression.WebExpressionAuthorizationManager;
 
-import com.shopsphere.orderservice.security.JwtAuthenticationFilter;
+import com.shopsphere.orderservice.security.JwtDecoderFactory;
+import com.shopsphere.orderservice.security.ProblemDetailWriter;
+import com.shopsphere.orderservice.security.RequestSizeLimitFilter;
+
+import jakarta.servlet.DispatcherType;
 
 @Configuration
 public class SecurityConfig {
 
-    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private static final String INTERNAL_NETWORKS_ONLY =
+            "hasIpAddress('127.0.0.1') or hasIpAddress('::1') or hasIpAddress('10.0.0.0/8') "
+                    + "or hasIpAddress('172.16.0.0/12') or hasIpAddress('192.168.0.0/16')";
 
-    public SecurityConfig(
-            JwtAuthenticationFilter jwtAuthenticationFilter) {
-        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+    @Bean
+    public JwtDecoder jwtDecoder(SecurityJwtProperties properties) {
+        return JwtDecoderFactory.create(properties);
+    }
+
+    /** Maps the "role" claim (USER / ADMIN) to ROLE_USER / ROLE_ADMIN. */
+    @Bean
+    public JwtAuthenticationConverter jwtAuthenticationConverter() {
+        JwtGrantedAuthoritiesConverter authorities = new JwtGrantedAuthoritiesConverter();
+        authorities.setAuthoritiesClaimName("role");
+        authorities.setAuthorityPrefix("ROLE_");
+
+        JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
+        converter.setJwtGrantedAuthoritiesConverter(authorities);
+        return converter;
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http)
-            throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                   JwtDecoder jwtDecoder,
+                                                   JwtAuthenticationConverter jwtAuthenticationConverter,
+                                                   AppProperties appProperties,
+                                                   ProblemDetailWriter problemWriter) throws Exception {
+
+        RequestSizeLimitFilter sizeFilter =
+                new RequestSizeLimitFilter(appProperties.request().maxBodyBytes(), problemWriter);
+
+        BearerTokenAuthenticationEntryPoint bearerEntryPoint = new BearerTokenAuthenticationEntryPoint();
+        BearerTokenAccessDeniedHandler bearerDeniedHandler = new BearerTokenAccessDeniedHandler();
 
         http
-            // Disable CSRF for the stateless REST API
-            .csrf(csrf -> csrf.disable())
+                .csrf(AbstractHttpConfigurer::disable)
+                .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                        .requestMatchers(EndpointRequest.to("health")).permitAll()
+                        .requestMatchers(EndpointRequest.to("info", "prometheus"))
+                        .access(new WebExpressionAuthorizationManager(INTERNAL_NETWORKS_ONLY))
 
-            // JWT-based authentication; no HTTP session
-            .sessionManagement(session -> session
-                .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
-            )
+                        // Swagger & OpenAPI endpoints grouped cleanly together
+                        .requestMatchers(
+                                "/swagger-ui/**",
+                                "/v3/api-docs/**",
+                                "/swagger-ui.html"
+                        ).permitAll()
 
-            // Handle authentication and authorization failures
-            .exceptionHandling(exceptions -> exceptions
-                .authenticationEntryPoint(
-                    new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)
-                )
-                .accessDeniedHandler((request, response, exception) -> {
-                    response.setStatus(HttpStatus.FORBIDDEN.value());
-                    response.setContentType("application/json");
-                    response.setCharacterEncoding("UTF-8");
+                        // Protected API endpoints
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/orders", "/api/orders/**").hasAnyRole("USER", "ADMIN")
 
-                    response.getWriter().write(
-                        "{\"status\":403,"
-                        + "\"error\":\"Forbidden\","
-                        + "\"message\":\"You do not have permission "
-                        + "to access this resource\"}"
-                    );
-                })
-            )
-
-            // Authorization rules
-            .authorizeHttpRequests(auth -> auth
-
-                // Permit internal error dispatches
-                .dispatcherTypeMatchers(DispatcherType.ERROR)
-                .permitAll()
-
-                // Public actuator endpoints
-                .requestMatchers(
-                    "/actuator/health",
-                    "/actuator/health/**",
-                    "/actuator/info",
-                    "/actuator/prometheus"
-                ).permitAll()
-
-                // Only USER and ADMIN can create or access order POST routes
-                .requestMatchers(
-                    HttpMethod.POST,
-                    "/api/orders",
-                    "/api/orders/**"
-                ).hasAnyRole("USER", "ADMIN")
-
-                // Deny all other requests by default
-                .anyRequest().denyAll()
-            )
-
-            // Execute JWT authentication before username/password auth
-            .addFilterBefore(
-                jwtAuthenticationFilter,
-                UsernamePasswordAuthenticationFilter.class
-            );
+                        .anyRequest().denyAll())
+                .oauth2ResourceServer(oauth -> oauth
+                        .jwt(jwt -> jwt.decoder(jwtDecoder).jwtAuthenticationConverter(jwtAuthenticationConverter))
+                        .authenticationEntryPoint((request, response, e) -> {
+                            bearerEntryPoint.commence(request, response, e);
+                            problemWriter.write(response, HttpStatus.UNAUTHORIZED, "Authentication required");
+                        })
+                        .accessDeniedHandler((request, response, e) -> {
+                            bearerDeniedHandler.handle(request, response, e);
+                            problemWriter.write(response, HttpStatus.FORBIDDEN, "Access denied");
+                        }))
+                .addFilterBefore(sizeFilter, BearerTokenAuthenticationFilter.class);
 
         return http.build();
     }

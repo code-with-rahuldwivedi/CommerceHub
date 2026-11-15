@@ -9,143 +9,89 @@ import org.springframework.transaction.annotation.Transactional;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shopsphere.orderservice.entity.Order;
-import com.shopsphere.orderservice.entity.OrderStatus;
-import com.shopsphere.orderservice.event.InventoryResultEvent;
+import com.shopsphere.orderservice.exception.InvalidEventException;
+import com.shopsphere.orderservice.exception.MissingOrderException;
+import com.shopsphere.orderservice.messaging.LegacyInventoryResult;
 import com.shopsphere.orderservice.repository.OrderRepository;
+import com.shopsphere.orderservice.service.OrderLifecycleService;
 
+/**
+ * Consumes the ORIGINAL result messages of the existing inventory-service ("inventory-events", unchanged format)
+ * and applies them through {@link OrderLifecycleService}. Always on. Retire it once inventory-service publishes
+ * envelope events to "inventory.events.v1" (see docs/EVENTS.md).
+ */
 @Component
 public class InventoryResultConsumer {
 
-    private static final Logger log =
-            LoggerFactory.getLogger(InventoryResultConsumer.class);
+    private static final Logger log = LoggerFactory.getLogger(InventoryResultConsumer.class);
+
+    static final String RESERVED = "INVENTORY_RESERVED";
+    static final String RESERVATION_FAILED = "INVENTORY_RESERVATION_FAILED";
+    static final String CANCELLED = "ORDER_CANCELLED";
+    static final String CANCELLATION_FAILED = "ORDER_CANCELLATION_FAILED";
 
     private final ObjectMapper objectMapper;
     private final OrderRepository orderRepository;
+    private final OrderLifecycleService lifecycle;
 
-    public InventoryResultConsumer(
-            ObjectMapper objectMapper,
-            OrderRepository orderRepository) {
+    public InventoryResultConsumer(ObjectMapper objectMapper, OrderRepository orderRepository,
+                                   OrderLifecycleService lifecycle) {
         this.objectMapper = objectMapper;
         this.orderRepository = orderRepository;
+        this.lifecycle = lifecycle;
     }
 
     @KafkaListener(
-            topics = "${inventory.kafka.result-topic:inventory-events}",
-            groupId = "${spring.kafka.consumer.group-id:order-service-group}"
-    )
+            topics = "${orders.inbound.legacy-inventory-topic}",
+            groupId = "${spring.kafka.consumer.group-id}")
     @Transactional
-    public void consumeInventoryResult(String message) throws Exception {
-        final InventoryResultEvent event;
+    public void consumeInventoryResult(String message) {
+        LegacyInventoryResult event = parse(message);
+        validate(event, message); // before touching the database
 
-        try {
-            event = objectMapper.readValue(message, InventoryResultEvent.class);
-        } catch (JsonProcessingException exception) {
-            throw new InvalidInventoryResultException(
-                    "Malformed inventory result event", exception);
-        }
+        Order order = orderRepository.findWithItemsById(event.orderId())
+                .orElseThrow(() -> new MissingOrderException(event.orderId()));
 
-        // Validate the event BEFORE querying the database.
-        validate(event, message);
-
-        Order order = orderRepository.findById(event.orderId())
-                .orElseThrow(() -> new MissingOrderException(
-                        "Order not found for inventory result: " + event.orderId()));
-
-        if (!order.getProductId().equals(event.productId())
-                || !order.getQuantity().equals(event.quantity())) {
-            throw new InvalidInventoryResultException(
-                    "Inventory result does not match order " + event.orderId());
+        // This format can only describe single-item orders: the result must match the order's one line.
+        if (order.getItems().size() != 1
+                || !order.getItems().get(0).getProductId().equals(event.productId())
+                || order.getItems().get(0).getQuantity() != event.quantity()) {
+            throw new InvalidEventException("Inventory result does not match order " + event.orderId());
         }
 
         switch (event.status()) {
-            case "INVENTORY_RESERVED" -> {
-                if (order.getStatus() != OrderStatus.PENDING) {
-                    log.debug(
-                            "Ignoring duplicate/stale inventory result for order {} status {}",
-                            order.getId(), order.getStatus());
-                    return;
-                }
-                order.setStatus(OrderStatus.CONFIRMED);
-            }
-
-            case "INVENTORY_RESERVATION_FAILED" -> {
-                if (order.getStatus() != OrderStatus.PENDING) {
-                    log.debug(
-                            "Ignoring duplicate/stale inventory result for order {} status {}",
-                            order.getId(), order.getStatus());
-                    return;
-                }
-                order.setStatus(OrderStatus.FAILED);
-            }
-
-            case "ORDER_CANCELLED", "ORDER_CANCELLATION_FAILED" -> {
-                if (order.getStatus() != OrderStatus.CANCEL_REQUESTED
-                        || event.commandId() == null
-                        || !event.commandId().equals(
-                                order.getCancellationCommandId())) {
-                    log.debug(
-                            "Ignoring stale cancellation result. orderId={}, commandId={}",
-                            order.getId(), event.commandId());
-                    return;
-                }
-
-                order.setStatus(
-                        "ORDER_CANCELLED".equals(event.status())
-                                ? OrderStatus.CANCELLED
-                                : OrderStatus.CANCEL_FAILED);
-            }
-
-            default -> throw new InvalidInventoryResultException(
-                    "Unknown inventory result status: " + event.status());
+            case RESERVED -> lifecycle.onInventoryReserved(event.orderId());
+            case RESERVATION_FAILED -> lifecycle.onInventoryReservationFailed(event.orderId(), event.message());
+            case CANCELLED -> lifecycle.onCancellationResult(event.orderId(), event.commandId(), true, event.message());
+            case CANCELLATION_FAILED ->
+                    lifecycle.onCancellationResult(event.orderId(), event.commandId(), false, event.message());
+            default -> throw new InvalidEventException("Unknown inventory result status: " + event.status());
         }
-
-        orderRepository.saveAndFlush(order);
-
-        log.info("Order {} status updated to {}",
-                order.getId(), order.getStatus());
+        log.debug("Applied legacy inventory result {} to order {}", event.status(), event.orderId());
     }
 
-    private void validate(InventoryResultEvent event, String message) {
+    private LegacyInventoryResult parse(String message) {
+        try {
+            return objectMapper.readValue(message, LegacyInventoryResult.class);
+        } catch (JsonProcessingException | IllegalArgumentException e) {
+            throw new InvalidEventException("Malformed inventory result event", e);
+        }
+    }
+
+    private static void validate(LegacyInventoryResult event, String message) {
         if (event == null
                 || event.orderId() == null || event.orderId() <= 0
                 || event.productId() == null || event.productId() <= 0
                 || event.quantity() == null || event.quantity() <= 0
                 || event.status() == null || event.status().isBlank()) {
-            throw new InvalidInventoryResultException(
-                    "Invalid inventory result event: " + message);
+            throw new InvalidEventException("Invalid inventory result event: " + message);
         }
-
-        // Reject unknown statuses before looking up the order.
-        if (!"INVENTORY_RESERVED".equals(event.status())
-                && !"INVENTORY_RESERVATION_FAILED".equals(event.status())
-                && !"ORDER_CANCELLED".equals(event.status())
-                && !"ORDER_CANCELLATION_FAILED".equals(event.status())) {
-            throw new InvalidInventoryResultException(
-                    "Unknown inventory result status: " + event.status());
+        boolean cancellation = CANCELLED.equals(event.status()) || CANCELLATION_FAILED.equals(event.status());
+        if (!RESERVED.equals(event.status()) && !RESERVATION_FAILED.equals(event.status()) && !cancellation) {
+            throw new InvalidEventException("Unknown inventory result status: " + event.status());
         }
-
-        if (("ORDER_CANCELLED".equals(event.status())
-                || "ORDER_CANCELLATION_FAILED".equals(event.status()))
-                && (event.commandId() == null
-                || event.commandId().isBlank())) {
-            throw new InvalidInventoryResultException(
-                    "Cancellation result must include commandId");
-        }
-    }
-
-    public static class MissingOrderException extends RuntimeException {
-        public MissingOrderException(String message) {
-            super(message);
-        }
-    }
-
-    public static class InvalidInventoryResultException extends RuntimeException {
-        public InvalidInventoryResultException(String message) {
-            super(message);
-        }
-
-        public InvalidInventoryResultException(String message, Throwable cause) {
-            super(message, cause);
+        if (cancellation && (event.commandId() == null || event.commandId().isBlank())) {
+            throw new InvalidEventException("Cancellation result must include commandId");
         }
     }
 }

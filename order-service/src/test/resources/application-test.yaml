@@ -1,0 +1,42 @@
+spring:
+  datasource:
+    # Harmless placeholders; the h2 profile or Testcontainers' @ServiceConnection take over.
+    url: jdbc:mysql://placeholder:3306/placeholder
+    username: placeholder
+    password: placeholder
+  cloud:
+    discovery:
+      enabled: false
+  kafka:
+    bootstrap-servers: localhost:9092
+    listener:
+      auto-startup: false      # no broker in these tests; the embedded-Kafka tests start their own containers
+
+eureka:
+  client:
+    enabled: false
+    service-url:
+      defaultZone: http://localhost:8761/eureka/
+
+management:
+  tracing:
+    enabled: false
+
+security:
+  jwt:
+    # replaced at runtime by the embedded JWKS server (see ApiTestSupport)
+    jwks-uri: http://localhost:1/.well-known/jwks.json
+    issuer: test-issuer
+    audience: shopsphere-api
+
+orders:
+  max-items: 3
+  require-shipping-address: false
+  catalog:
+    url: ""
+
+outbox:
+  publisher:
+    enabled: false     # the publisher is tested on its own; the MySQL tests drive the claim query directly
+  cleanup:
+    enabled: false

@@ -1,63 +1,25 @@
 package com.shopsphere.orderservice.config;
 
-import com.shopsphere.orderservice.consumer.InventoryResultConsumer;
-
-import org.apache.kafka.common.TopicPartition;
-
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-
-import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
-import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.listener.DefaultErrorHandler;
-import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 
-import org.springframework.util.backoff.FixedBackOff;
+import com.shopsphere.orderservice.messaging.KafkaErrorHandlers;
+import com.shopsphere.orderservice.metrics.OrderMetrics;
 
+/**
+ * Spring Boot's auto-configured listener container factory picks up a single CommonErrorHandler bean,
+ * so every @KafkaListener in this service gets retry-with-backoff and a dead-letter topic.
+ */
 @Configuration
 public class KafkaConsumerConfig {
 
     @Bean
-    public DefaultErrorHandler inventoryResultErrorHandler(
-            KafkaTemplate<String, String> kafkaTemplate) {
-
-        DeadLetterPublishingRecoverer recoverer =
-                new DeadLetterPublishingRecoverer(
-                        kafkaTemplate,
-                        (record, exception) -> new TopicPartition(
-                                record.topic() + ".DLT",
-                                record.partition()
-                        )
-                );
-
-        // Retry transient failures twice, waiting 1 second between retries.
-        DefaultErrorHandler errorHandler = new DefaultErrorHandler(
-                recoverer,
-                new FixedBackOff(1000L, 2L)
-        );
-
-        // These errors are permanent; send them directly to the DLT.
-        errorHandler.addNotRetryableExceptions(
-                InventoryResultConsumer.MissingOrderException.class,
-                InventoryResultConsumer.InvalidInventoryResultException.class
-        );
-
-        return errorHandler;
-    }
-
-    @Bean(name = "kafkaListenerContainerFactory")
-    public ConcurrentKafkaListenerContainerFactory<String, String>
-            kafkaListenerContainerFactory(
-                    ConsumerFactory<String, String> consumerFactory,
-                    DefaultErrorHandler inventoryResultErrorHandler) {
-
-        ConcurrentKafkaListenerContainerFactory<String, String> factory =
-                new ConcurrentKafkaListenerContainerFactory<>();
-
-        factory.setConsumerFactory(consumerFactory);
-        factory.setCommonErrorHandler(inventoryResultErrorHandler);
-
-        return factory;
+    public DefaultErrorHandler inboundErrorHandler(KafkaTemplate<String, String> kafkaTemplate,
+                                                   OrderProperties properties,
+                                                   OrderMetrics metrics) {
+        return KafkaErrorHandlers.create(kafkaTemplate, properties.inbound().retry(),
+                record -> metrics.deadLetter(record.topic()));
     }
 }

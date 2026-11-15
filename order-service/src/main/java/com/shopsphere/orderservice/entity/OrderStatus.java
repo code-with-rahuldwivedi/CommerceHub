@@ -2,6 +2,7 @@ package com.shopsphere.orderservice.entity;
 
 public enum OrderStatus {
     PENDING,
+    AWAITING_PAYMENT,
     CONFIRMED,
     FAILED,
     SHIPPED,

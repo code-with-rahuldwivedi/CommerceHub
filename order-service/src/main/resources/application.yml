@@ -1,83 +1,172 @@
-outbox:
-  publisher:
-    topic: order-events
-
-server:
-  port: ${SERVER_PORT:8083}
-
 spring:
   application:
-    name: ORDER-SERVICE
-
+    name: order-service
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/shopsphere_order_db?createDatabaseIfNotExist=true}
-    username: ${DB_USERNAME:root}
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
-
-  flyway:
-    enabled: true
-    baseline-on-migrate: true
-    baseline-version: 1
-
+    hikari:
+      maximum-pool-size: ${DB_POOL_MAX:20}
+      minimum-idle: ${DB_POOL_MIN_IDLE:5}
+      connection-timeout: 3000
+      validation-timeout: 2000
+      max-lifetime: 1500000
+      leak-detection-threshold: 20000
   jpa:
-    hibernate:
-      ddl-auto: validate
     open-in-view: false
     show-sql: false
+    hibernate:
+      ddl-auto: validate
     properties:
       hibernate:
-        format_sql: false
+        jdbc:
+          time_zone: UTC
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  task:
+    scheduling:
+      thread-name-prefix: order-sched-
+      pool:
+        size: 4          # outbox publisher, cleanup and expiry jobs must not starve each other
 
   kafka:
-    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
-
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
-
+      acks: all
+      compression-type: lz4
+      properties:
+        enable.idempotence: true          # no duplicates / reordering caused by producer retries
+        delivery.timeout.ms: 30000
+        linger.ms: 5
     consumer:
-      group-id: order-service-group
+      group-id: ${KAFKA_CONSUMER_GROUP:order-service-group}
       auto-offset-reset: earliest
+      enable-auto-commit: false
+      max-poll-records: 50
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
       value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      properties:
+        max.poll.interval.ms: 300000
+        session.timeout.ms: 45000
+    listener:
+      ack-mode: record
+
+  cloud:
+    openfeign:
+      client:
+        config:
+          default:
+            connect-timeout: 2000
+            read-timeout: 3000
+
+server:
+  port: ${SERVER_PORT:8083}
+  shutdown: graceful
+  max-http-request-header-size: 16KB
+  tomcat:
+    connection-timeout: 10s
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:none}
 
 eureka:
   client:
+    enabled: ${EUREKA_ENABLED:true}
     service-url:
-      defaultZone: ${EUREKA_DEFAULT_ZONE:http://localhost:8761/eureka/}
-
-inventory:
-  kafka:
-    result-topic: inventory-events
-
-jwt:
-  secret: ${JWT_SECRET}
-
-logging:
-  level:
-    org.springframework.security: INFO
-    com.shopsphere.orderservice: INFO
-    org.hibernate.SQL: WARN
+      defaultZone: ${EUREKA_DEFAULT_ZONE}
+  instance:
+    prefer-ip-address: true
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info,prometheus
-
   endpoint:
     health:
       show-details: never
-
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
   metrics:
     tags:
       application: ${spring.application.name}
-
   tracing:
-    enabled: false
+    enabled: ${TRACING_ENABLED:false}
     sampling:
       probability: ${TRACING_SAMPLING_PROBABILITY:0.1}
-
   otlp:
     tracing:
       endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4318/v1/traces}
+
+# Access tokens are issued by user-service (RS256) and verified here with its public keys.
+security:
+  jwt:
+    jwks-uri: ${JWT_JWKS_URI}
+    issuer: ${JWT_ISSUER:shopsphere-user-service}
+    audience: ${JWT_AUDIENCE:shopsphere-api}
+    connect-timeout: PT2S
+    read-timeout: PT3S
+
+app:
+  request:
+    max-body-bytes: 16384
+
+orders:
+  currency: ${ORDER_CURRENCY:INR}
+  # >1 needs an inventory-service that reserves multi-item orders (consumes order.events.v1). See docs/EVENTS.md.
+  max-items: ${ORDER_MAX_ITEMS:1}
+  max-quantity-per-item: ${ORDER_MAX_QUANTITY_PER_ITEM:100}
+  require-shipping-address: ${ORDER_REQUIRE_SHIPPING_ADDRESS:false}
+  events:
+    topic: ${ORDER_EVENTS_TOPIC:order.events.v1}        # versioned fat events for every consumer (new services subscribe here)
+    legacy-enabled: ${ORDER_LEGACY_EVENTS_ENABLED:true} # keeps the original ORDER_CREATED / ORDER_CANCEL_REQUESTED stream
+    legacy-topic: ${ORDER_LEGACY_TOPIC:order-events}
+  payment:
+    enabled: ${ORDER_PAYMENT_ENABLED:false}             # true: PENDING -> AWAITING_PAYMENT -> CONFIRMED
+  expiry:
+    enabled: ${ORDER_EXPIRY_ENABLED:false}
+    pending-timeout: ${ORDER_PENDING_TIMEOUT:PT15M}
+    awaiting-payment-timeout: ${ORDER_AWAITING_PAYMENT_TIMEOUT:PT30M}
+    interval-ms: 60000
+  inbound:
+    enabled: ${ORDER_INBOUND_ENABLED:false}             # envelope events from inventory/payment/... (see docs/EVENTS.md)
+    topics: ${ORDER_INBOUND_TOPICS:inventory.events.v1,payment.events.v1}
+    legacy-inventory-topic: ${INVENTORY_RESULT_TOPIC:inventory-events}
+    retry:
+      max-retries: 5
+      initial-interval: PT1S
+      multiplier: 2.0
+      max-interval: PT30S
+  catalog:
+    url: ${PRODUCT_SERVICE_URL:}      # empty = discover product-service through Eureka
+    retry-attempts: 3
+    retry-wait: PT0.2S
+    circuit-window: 20
+    circuit-failure-rate: 50
+    circuit-open-duration: PT20S
+
+outbox:
+  publisher:
+    enabled: true
+    fixed-delay-ms: ${OUTBOX_POLL_MS:500}
+    batch-size: 50
+    stale-claim: PT2M
+    send-timeout: PT10S
+    max-attempts: ${OUTBOX_MAX_ATTEMPTS:20}   # after this the event is parked as DEAD and an alert metric fires
+  cleanup:
+    enabled: true
+    cron: ${OUTBOX_CLEANUP_CRON:0 15 3 * * *}
+    retention-days: ${OUTBOX_RETENTION_DAYS:7}
+
+logging:
+  pattern:
+    level: "%5p [%X{requestId:-}]"
+  level:
+    root: INFO
+    com.shopsphere.orderservice: INFO
